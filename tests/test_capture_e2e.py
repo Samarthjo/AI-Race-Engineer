@@ -112,7 +112,8 @@ def test_replay_reproduces_stream(tmp_path: Path):
     got: list[bytes] = []
     drainer = threading.Thread(target=lambda: got.extend(_drain(rx, len(payloads))))
     drainer.start()
-    result = replay(iter_capture(run.directory), ("127.0.0.1", port), speed=0)
+    # original pace: an unpaced burst of ~1.3 KB datagrams can overflow a small test socket
+    result = replay(iter_capture(run.directory), ("127.0.0.1", port), speed=1.0)
     drainer.join(10)
     rx.close()
     assert result.sent == len(payloads)

@@ -1,6 +1,7 @@
 """Synthetic F1 25-style datagrams for tests.
 
-Only the 29-byte header is realistic; bodies are zero padding. These are test fixtures,
+Only the 29-byte header is realistic; bodies are zero padding of the spec size.
+These are test fixtures,
 never real telemetry. Real golden captures from the PS5 replace them in Stage 1.
 """
 
@@ -9,10 +10,10 @@ from __future__ import annotations
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 
-from pitwall.f1udp.header import PacketHeader, PacketId
+from pitwall.f1udp.f125 import PACKET_SIZES
+from pitwall.f1udp.header import HEADER_SIZE, PacketHeader, PacketId
 
 SYNTH_SESSION_UID = 0x5E57_0000_0000_0001
-BODY_SIZE = 100
 
 
 def make_packet(
@@ -22,7 +23,7 @@ def make_packet(
     session_uid: int = SYNTH_SESSION_UID,
     packet_format: int = 2025,
     session_time: float | None = None,
-    body_size: int = BODY_SIZE,
+    body_size: int | None = None,
 ) -> bytes:
     hdr = PacketHeader(
         packet_format=packet_format,
@@ -38,6 +39,8 @@ def make_packet(
         player_car_index=0,
         secondary_player_car_index=255,
     )
+    if body_size is None:  # spec size for the packet id, zero body
+        body_size = PACKET_SIZES.get(packet_id, HEADER_SIZE + 100) - HEADER_SIZE
     return hdr.pack() + bytes(body_size)
 
 

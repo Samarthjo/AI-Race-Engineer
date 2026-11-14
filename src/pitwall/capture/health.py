@@ -17,6 +17,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
+from pitwall.f1udp.f125 import PACKET_SIZES as F125_SIZES
 from pitwall.f1udp.header import PacketHeader, PacketId, PacketTooShortError, packet_name
 
 PAUSE_GAP_NS = 1_000_000_000
@@ -324,6 +325,23 @@ class HealthTracker:
             )
         else:
             out.append(Check("packet_ids", "ok", f"{len(self.counts)} known packet types seen"))
+
+        if fmts == [EXPECTED_PACKET_FORMAT]:
+            wrong = [
+                f"{packet_name(pid)} {sorted(self.sizes[pid])} (spec {F125_SIZES[pid]})"
+                for pid in sorted(self.sizes)
+                if pid in F125_SIZES and set(self.sizes[pid]) != {F125_SIZES[pid]}
+            ]
+            if wrong:
+                out.append(
+                    Check(
+                        "packet_sizes",
+                        "fail",
+                        "Packet sizes differ from the F1 25 spec: " + "; ".join(wrong),
+                    )
+                )
+            else:
+                out.append(Check("packet_sizes", "ok", "All packet sizes match the F1 25 spec"))
 
         if self.expected_hz and self.active_ns > 0:
             hz = self.counts.get(PacketId.CAR_TELEMETRY, 0) / (self.active_ns / 1e9)

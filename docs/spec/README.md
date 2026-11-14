@@ -17,6 +17,10 @@ docs/spec/F1_25_UDP_Specification_v9.0.pdf   (or .txt / .md with the full struct
 
 The cloud development environment cannot reach forums.ea.com, so this is a manual step.
 
-What Stage 0 already assumes from the spec (to re-verify in Stage 1):
-- 29-byte little-endian packet header (`src/pitwall/f1udp/header.py`)
-- packet ids 0–15 (`PacketId`)
+Status of the layouts in `src/pitwall/f1udp/f125.py`:
+- All 16 packet layouts (and the 29-byte header) were cross-checked against two independent
+  F1 25 implementations: Rust crate `f1-game-library-models-25` v0.5.0 and npm
+  `@deltazeroproduction/f1-udp-parser` v1.2.2. They agree on every packet size and field order.
+- `pitwall capture stats` compares the size of every received packet with the spec, so the
+  first real recording validates the layouts on actual game data.
+- Still to do: line-by-line check against the official document once it is in this folder.

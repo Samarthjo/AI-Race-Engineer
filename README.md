@@ -4,14 +4,15 @@ Personal Formula 1 race engineer for **F1 25 on PS5**. Records your telemetry ov
 your laps corner by corner, benchmarks them against real F1 drivers (FastF1, 2025 season) and
 writes evidence-backed coaching reports. Runs locally on a Mac.
 
-The full development plan lives in [docs/plan.md](docs/plan.md).
+- **How to use it:** [docs/user-guide.md](docs/user-guide.md)
+- **Development plan:** [docs/plan.md](docs/plan.md)
 
 ## Status
 
 | Stage | Scope | State |
 |---|---|---|
-| 0 | Capture kit: raw UDP recording, forwarding, health checks, replay | **in progress** |
-| 1 | Packet decoder, sessions and laps | planned |
+| 0 | Capture kit: raw UDP recording, forwarding, health checks, replay | done |
+| 1 | Packet decoder, sessions and laps | done (awaiting validation on real recordings) |
 | 2 | Lap processing, self-comparison, first UI | planned |
 | 3 | Track model, corner analysis engine | planned |
 | 4 | FastF1 reference, pro benchmark | planned |
@@ -57,6 +58,16 @@ The full development plan lives in [docs/plan.md](docs/plan.md).
    uv run pitwall capture stats <capture-id>
    ```
 
+7. Turn recordings into laps and look at them:
+
+   ```bash
+   uv run pitwall ingest
+   ```
+
+   ```bash
+   uv run pitwall laps latest
+   ```
+
 Then follow the recording checklist in [docs/golden-sessions.md](docs/golden-sessions.md).
 
 ## Commands
@@ -69,6 +80,11 @@ Then follow the recording checklist in [docs/golden-sessions.md](docs/golden-ses
 | `pitwall capture list` | All captures with label, status and loss |
 | `pitwall capture replay <id>` | Re-send a capture over UDP (real time or `--speed 0`) |
 | `pitwall capture compact <id>` | Compress leftover raw segments after a crash (lossless, verified) |
+| `pitwall ingest` | Decode new captures into sessions and laps |
+| `pitwall sessions` | List sessions |
+| `pitwall laps <session\|latest>` | Lap times, sectors, validity, flashbacks, data quality |
+| `pitwall export <session> --lap N` | Per-frame telemetry of a lap to CSV/Parquet |
+| `pitwall decode <id>` | Print decoded packets as JSON |
 
 ## Data
 
@@ -79,6 +95,11 @@ Default data directory: `~/PitwallData` (override with `--data-dir`, `PITWALL_DA
 ~/PitwallData/raw/<capture_id>/
     capture.json          manifest: settings, label, note, final health report
     seg_00000.pwraw.zst   raw packets (never modified; compressed losslessly after rotation)
+```
+
+```
+~/PitwallData/pitwall.db                                 sessions + laps catalogue
+~/PitwallData/sessions/<capture_id>/<session>/frames.parquet  decoded player telemetry per frame
 ```
 
 Raw captures are the foundation: every later layer (laps, metrics, findings, reports) can be

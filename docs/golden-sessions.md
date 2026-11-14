@@ -50,6 +50,19 @@ uv run pitwall capture stats <capture-id>
 
 All checks should be ✓ (except `packet_loss` may show `info` on very short captures).
 
-Then the captures need to reach the development environment. Raw captures are tens of MB each, so
-plain git is not suitable. We'll set up Git LFS in the private repo (or another transfer) at the
-start of Stage 1.
+Then turn them into laps and compare with your notes:
+
+```bash
+uv run pitwall ingest
+```
+
+```bash
+uv run pitwall laps <session id>
+```
+
+Lap and sector times must match the game exactly. The out-lap, invalid lap, flashback lap, paused
+lap and the quit lap must be labelled as such. If anything differs, note the capture id and the
+lap: that's exactly what this checklist is for.
+
+Sharing captures for development: raw captures are tens of MB each, so plain git is not suitable.
+When needed we'll use Git LFS in the private repo, or another transfer.

@@ -165,7 +165,7 @@ analysis checks what a source can support before computing a metric (Principle 5
 ### Tech stack
 - Python 3.12, `uv`, ruff, pyright, pytest + hypothesis
 - numpy / pandas (FastF1-native) / pyarrow / scipy
-- SQLite + SQLAlchemy 2 + Alembic
+- SQLite via the standard library with numbered migrations (SQLAlchemy/Alembic only if the schema outgrows it)
 - FastAPI + uvicorn + WebSockets; Typer CLI
 - FastF1 (pinned version) with its cache enabled
 - LLM: **Ollama (local, on the M4)** behind an `LLMProvider` interface, using JSON-schema structured output for reports

@@ -352,5 +352,279 @@ def capture_compact(
         console.print(f"  {seg.name} → {out.name}")
 
 
+# --------------------------------------------------------------- sessions and laps
+
+
+def _fmt_ms(ms: int | None) -> str:
+    if ms is None:
+        return "-"
+    minutes, rest = divmod(int(ms), 60_000)
+    secs = rest / 1000
+    return f"{minutes}:{secs:06.3f}" if minutes else f"{secs:.3f}"
+
+
+def _db(cfg: Config):
+    from pitwall.ingest.pipeline import DB_NAME
+    from pitwall.storage import db
+
+    return db.connect(cfg.data_dir / DB_NAME)
+
+
+def _pick_session(conn: Any, query: str):
+    from pitwall.storage import db
+
+    matches = db.find_sessions(conn, query)
+    if not matches:
+        console.print(f"[red]No session matches {query!r}. See: pitwall sessions[/]")
+        raise typer.Exit(1)
+    if len(matches) > 1:
+        console.print(f"[yellow]{len(matches)} sessions match {query!r}; be more specific:[/]")
+        for m in matches[:10]:
+            console.print(f"  {m['session_key']}  {m['track_name']}  {m['session_type_name']}")
+        raise typer.Exit(1)
+    return matches[0]
+
+
+@app.command()
+def ingest(
+    captures: Annotated[
+        list[str] | None, typer.Argument(help="Capture ids or directories (default: all new)")
+    ] = None,
+    force: Annotated[bool, typer.Option(help="Re-ingest captures already ingested")] = False,
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Decode captures into sessions and laps (safe to re-run; results are replaced)."""
+    from pitwall.ingest.pipeline import PIPELINE_VERSION, ingest_capture
+    from pitwall.storage import db
+
+    cfg = _load(config, data_dir)
+    conn = _db(cfg)
+    if captures:
+        targets = [_resolve_capture(c, cfg) for c in captures]
+    else:
+        done = db.ingested(conn)
+        targets = []
+        for d in (
+            sorted(p for p in cfg.raw_dir.glob("*") if p.is_dir()) if cfg.raw_dir.exists() else []
+        ):
+            m = read_manifest(d) or {}
+            if m.get("status") == "running":
+                console.print(f"[dim]skip {d.name}: capture still running[/]")
+                continue
+            if not force and done.get(d.name) == PIPELINE_VERSION:
+                continue
+            targets.append(d)
+    if not targets:
+        console.print("Nothing new to ingest. (Use --force to re-ingest everything.)")
+        return
+    for path in targets:
+        if not path.is_dir():
+            console.print(f"[red]{path} is not a capture directory[/]")
+            raise typer.Exit(1)
+        res = ingest_capture(path, cfg.data_dir, conn)
+        err = sum(res.errors.values())
+        console.print(
+            f"[bold]{res.capture_id}[/]: {res.decoded}/{res.datagrams} packets decoded"
+            + (f", [yellow]{err} not decoded {res.errors}[/]" if err else "")
+        )
+        for ex in res.error_examples[:3]:
+            console.print(f"    [dim]{ex}[/]")
+        if res.read.truncated_segments:
+            console.print(f"  [yellow]truncated segments: {res.read.truncated_segments}[/]")
+        for so in res.sessions:
+            s = so.summary
+            console.print(
+                f"  {s['track_name']} · {s['session_type_name']} · {s['lap_count']} laps "
+                f"({s['usable_laps']} usable) · best usable {_fmt_ms(s['best_usable_lap_ms'])} "
+                f"· session …{s['session_uid'][-8:]}"
+            )
+        if res.skipped_sessions:
+            console.print(
+                f"  [dim]{len(res.skipped_sessions)} session(s) without lap data skipped[/]"
+            )
+
+
+@app.command()
+def sessions(
+    limit: Annotated[int, typer.Option(help="How many to show")] = 20,
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """List ingested sessions, newest first."""
+    from pitwall.storage import db
+
+    cfg = _load(config, data_dir)
+    rows = db.list_sessions(_db(cfg), limit=limit)
+    if not rows:
+        console.print("No sessions yet. Record with `pitwall capture run`, then `pitwall ingest`.")
+        return
+    t = Table(title="Sessions (use the session id with `pitwall laps`)")
+    t.add_column("session id", no_wrap=True)
+    for col in ("started (UTC)", "track", "type", "laps", "usable", "best usable", "flashbacks"):
+        t.add_column(col)
+    for r in rows:
+        t.add_row(
+            r["session_uid"][-8:],
+            (r["first_utc"] or "")[:16].replace("T", " "),
+            r["track_name"] or "-",
+            r["session_type_name"] or "-",
+            str(r["lap_count"]),
+            str(r["usable_laps"]),
+            _fmt_ms(r["best_usable_lap_ms"]),
+            str(r["flashbacks"]),
+        )
+    console.print(t)
+
+
+@app.command()
+def laps(
+    session: Annotated[str, typer.Argument(help="Session id (or any unique part), or 'latest'")],
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Lap table for one session: times, sectors, validity, data quality."""
+    from pitwall.f1udp import enums
+    from pitwall.storage import db
+
+    cfg = _load(config, data_dir)
+    conn = _db(cfg)
+    s = _pick_session(conn, session)
+    console.print(
+        f"[bold]{s['track_name']}[/] · {s['session_type_name']} · {s['game_mode_name']} · "
+        f"game v{s['game_version']} · {s['first_utc']} · session …{s['session_uid'][-8:]}"
+    )
+    assists = json.loads(s["assists_json"] or "{}")
+    if assists:
+        console.print(
+            "Assists (session): braking "
+            + enums.name(enums.BRAKING_ASSIST, assists.get("braking_assist"))
+            + " · gearbox "
+            + enums.name(enums.GEARBOX_ASSIST, assists.get("gearbox_assist"))
+            + " · steering "
+            + enums.name(enums.ON_OFF, assists.get("steering_assist"))
+            + " · racing line "
+            + enums.name(enums.RACING_LINE, assists.get("dynamic_racing_line"))
+        )
+    t = Table()
+    for col in ("#", "lap", "kind", "time", "S1", "S2", "S3", "valid", "usable", "tyre", "loss %"):
+        t.add_column(col, no_wrap=col in ("time", "S1", "S2", "S3"))
+    t.add_column("issues / notes")
+    for r in db.list_laps(conn, s["session_key"]):
+        issues = json.loads(r["issues_json"])
+        notes = json.loads(r["notes_json"])
+        valid = {None: "-", 1: "[green]yes[/]", 0: "[red]no[/]"}[r["valid"]]
+        tyre = (
+            f"{enums.name(enums.VISUAL_COMPOUNDS, r['tyre_visual'], 'tyre')} ({r['tyre_age_laps']})"
+            if r["tyre_visual"] is not None
+            else "-"
+        )
+        text = "; ".join([f"[red]{i}[/]" for i in issues] + [f"[dim]{n}[/]" for n in notes])
+        t.add_row(
+            str(r["lap_index"]),
+            str(r["lap_number"]),
+            r["kind"],
+            _fmt_ms(r["lap_time_ms"]),
+            _fmt_ms(r["s1_ms"]),
+            _fmt_ms(r["s2_ms"]),
+            _fmt_ms(r["s3_ms"]),
+            valid,
+            "[green]yes[/]" if r["usable"] else "no",
+            tyre,
+            f"{r['loss_pct']:.1f}",
+            text,
+        )
+    console.print(t)
+    console.print("[dim]# = lap index (use with `pitwall export`); lap = game lap number[/]")
+
+
+@app.command()
+def export(
+    session: Annotated[str, typer.Argument(help="Session id (or unique part), or 'latest'")],
+    lap: Annotated[
+        int | None, typer.Option(help="Lap index from `pitwall laps` (default: all)")
+    ] = None,
+    out: Annotated[Path | None, typer.Option(help="Output file (.csv or .parquet)")] = None,
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Export per-frame player telemetry of a session or one lap to CSV/Parquet."""
+    import pyarrow as pa
+    import pyarrow.csv as pacsv
+    import pyarrow.parquet as pq
+
+    from pitwall.ingest.pipeline import read_frames
+
+    cfg = _load(config, data_dir)
+    s = _pick_session(_db(cfg), session)
+    table = read_frames(cfg.data_dir / s["frames_path"])
+    if lap is not None:
+        table = table.filter(pa.array(table["lap_index"].to_numpy() == lap))
+        if table.num_rows == 0:
+            console.print(f"[red]No frames for lap index {lap}[/]")
+            raise typer.Exit(1)
+    if out is None:
+        suffix = f"_lap{lap}" if lap is not None else ""
+        out = Path(f"{s['session_uid'][-8:]}{suffix}.csv")
+    if out.suffix == ".parquet":
+        pq.write_table(table, out, compression="zstd")
+    else:
+        pacsv.write_csv(table, out)
+    console.print(f"Wrote {table.num_rows} frames x {table.num_columns} columns to {out}")
+
+
+@app.command()
+def decode(
+    capture: Annotated[str, typer.Argument(help="Capture id, directory or segment file")],
+    packet: Annotated[
+        str, typer.Option(help="Packet type name or id, e.g. CAR_TELEMETRY")
+    ] = "CAR_TELEMETRY",
+    limit: Annotated[int, typer.Option(help="How many packets to print")] = 1,
+    skip: Annotated[int, typer.Option(help="Skip this many matching packets first")] = 0,
+    all_cars: Annotated[bool, typer.Option("--all-cars", help="Include all 22 cars")] = False,
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Print decoded packets as JSON (to compare values with what the game shows)."""
+    from pitwall.f1udp.decoder import DecodeError, decode_packet, to_python
+    from pitwall.f1udp.header import PacketHeader, PacketId, PacketTooShortError
+
+    cfg = _load(config, data_dir)
+    path = _resolve_capture(capture, cfg)
+    try:
+        pid = int(packet) if packet.isdigit() else int(PacketId[packet.upper()])
+    except KeyError:
+        console.print(
+            f"[red]Unknown packet type {packet!r}. Known: {[p.name for p in PacketId]}[/]"
+        )
+        raise typer.Exit(1) from None
+    shown = seen = 0
+    for rec in iter_capture(path):
+        try:
+            hdr = PacketHeader.unpack(rec.payload)
+        except PacketTooShortError:
+            continue
+        if hdr.packet_id != pid:
+            continue
+        seen += 1
+        if seen <= skip:
+            continue
+        try:
+            pkt = decode_packet(rec.payload)
+        except DecodeError as exc:
+            console.print(f"[red]{exc}[/]")
+            continue
+        data = to_python(pkt)
+        if "car" in data and isinstance(data["car"], list) and not all_cars:
+            idx = hdr.player_car_index
+            data["car"] = {"player_car_index": idx, "data": data["car"][idx] if idx < 22 else None}
+        console.print_json(json.dumps(data))
+        shown += 1
+        if shown >= limit:
+            break
+    if shown == 0:
+        console.print(f"No decodable {PacketId(pid).name} packets found.")
+
+
 if __name__ == "__main__":
     app()
