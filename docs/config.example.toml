@@ -1,0 +1,16 @@
+# Copy to ~/.config/pitwall/config.toml (or point PITWALL_CONFIG at it). All keys optional.
+
+data_dir = "~/PitwallData"
+
+[capture]
+bind_host = "0.0.0.0"
+port = 20777
+# Copies of every packet go here (live analysis / UI in later stages). Empty list = no forwarding.
+forward = ["127.0.0.1:20778"]
+# Only accept packets from these IPs (e.g. your PS5). Empty = accept all.
+allow_sources = []
+rotate_seconds = 300      # start a new raw segment every 5 minutes...
+rotate_mb = 256           # ...or at this size, whichever comes first
+compress = true           # compress closed segments (lossless, verified)
+status_interval_s = 5.0
+expected_hz = 60          # the PS5 "UDP Send Rate"; used by the health checks
