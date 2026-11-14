@@ -12,7 +12,7 @@ import pytest
 from pitwall.capture.rawlog import RawRecord, RotatingRawLogWriter
 from pitwall.ingest.pipeline import DB_NAME, IngestResult, ingest_capture
 from pitwall.storage import db
-from tests.synth_session import LapPlan, SessionSynth, SyntheticSession
+from pitwall.synth.session import LapPlan, SessionSynth, SyntheticSession
 
 PLANS = [
     LapPlan(6.0, kind="out"),

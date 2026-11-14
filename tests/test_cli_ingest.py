@@ -3,7 +3,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from pitwall.cli import app
-from tests.synth_session import LapPlan, SessionSynth
+from pitwall.synth.session import LapPlan, SessionSynth
 from tests.test_ingest import write_capture
 
 runner = CliRunner(env={"COLUMNS": "200"})  # a typical terminal; 80 squeezes the lap table
@@ -60,3 +60,21 @@ def test_ingest_sessions_laps_export_decode(tmp_path: Path):
 def test_laps_unknown_session(tmp_path: Path):
     res = runner.invoke(app, ["laps", "nope", "--data-dir", str(tmp_path)])
     assert res.exit_code == 1
+
+
+def test_demo_and_compare(tmp_path: Path):
+    args = ["--data-dir", str(tmp_path / "d")]
+    res = runner.invoke(app, ["demo", *args])
+    assert res.exit_code == 0, res.output
+    assert "synthetic" in res.output
+    res = runner.invoke(
+        app, ["compare", "latest", "--lap", "4", "--ref", "theoretical_best", *args]
+    )
+    assert res.exit_code == 0, res.output
+    assert "theoretical best" in res.output and "Largest losses" in res.output
+    res = runner.invoke(app, ["compare", "latest", "--lap", "0", *args])
+    assert res.exit_code == 1 and "Cannot compare" in res.output
+    res = runner.invoke(
+        app, ["compare", "latest", "--lap", "4", "--ref", "lap", "--ref-lap", "2", *args]
+    )
+    assert res.exit_code == 0, res.output

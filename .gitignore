@@ -13,3 +13,4 @@ build/
 *.pwraw.zst
 *.pwraw.zst.tmp
 PitwallData/
+web/node_modules/

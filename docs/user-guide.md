@@ -13,7 +13,9 @@ at the bottom.
 | Decode every packet type; build sessions and laps | ✅ Stage 1 |
 | Lap table: times, sectors, validity, out/in/flying laps, flashbacks, pauses, data quality | ✅ Stage 1 |
 | Export a lap's telemetry to CSV | ✅ Stage 1 |
-| Lap analysis graphs and comparison with your best lap | Stage 2 |
+| Compare any lap with your session best, personal best or theoretical best | ✅ Stage 2 |
+| Web app: Lap Analysis page (synchronised graphs, track map, metrics) | ✅ Stage 2 |
+| Synthetic demo data, to explore the app without the PS5 | ✅ Stage 2 |
 | Corner-by-corner analysis | Stage 3 |
 | Comparison with real F1 drivers (FastF1) | Stage 4 |
 | Race engineer reports | Stage 5 |
@@ -176,9 +178,36 @@ second) with every channel: speed, throttle, brake, steering, gear, RPM, lap dis
 G-forces, tyre temperatures and pressures, fuel, ERS, wheel slip, suspension, and more. It
 opens in Numbers or Excel. Use `--out lap1.parquet` for the compact Parquet format instead.
 
+### Step 7: analyse a lap in the browser
+
+```bash
+uv run pitwall serve --open
+```
+
+This starts the Pitwall web app on this Mac and opens http://127.0.0.1:8000. It only runs
+locally and reads your data folder. Stop it with Ctrl+C. The **Lap Analysis** page is
+explained in [3.2](#32-the-lap-analysis-page). While `pitwall capture run` is recording, the
+pill at the top right shows basic live status (track, lap, lap time, speed).
+
+You can run `serve` and `capture run` at the same time, in two Terminal windows.
+
+### No PS5 nearby? Try the demo
+
+```bash
+uv run pitwall demo
+```
+
+This creates a **synthetic** session on a made-up test track, where each lap makes one
+deliberate mistake (late braking into T1, slow through T2 or T6, late on the throttle out of
+T4, an invalid lap, a flashback lap). It is labelled "synthetic" everywhere: in `pitwall
+sessions`, in the app (yellow banner), and it never counts towards your personal bests. It is
+useful to learn the screens before you have real laps.
+
 ---
 
-## 3. Understanding the lap table
+## 3. Understanding the results
+
+### 3.1 The lap table
 
 | Column | Meaning |
 |---|---|
@@ -209,6 +238,69 @@ Common issues and notes:
 | `assists on: …` (note) | Traction control, ABS, braking assist, steering assist or auto gearbox were on |
 | `lap time sources disagree` (note) | Two of the game's own timing sources differ; please report it, it may point to a decoding issue |
 
+### 3.2 The Lap Analysis page
+
+At the top, choose:
+- **Session**: newest first; synthetic sessions are marked.
+- **Lap to analyse**: only complete flying laps can be compared. Out-laps, in-laps and
+  incomplete laps don't start and end at the line. Unusable laps (invalid, flashback, packet
+  loss) can be opened but are labelled.
+- **Compare with**:
+  - **Session best**: your fastest usable lap of this session.
+  - **Personal best**: your fastest usable lap on this track (same car class), from any
+    session. Real and synthetic laps are never mixed.
+  - **Theoretical best**: your best sector 1, best sector 2 and best sector 3 of the
+    session, stitched into one lap at the game's sector lines. It's what you'd do if you
+    put your best sectors together.
+  - **Another lap**: any lap of the session.
+
+**Summary tiles:** lap time, reference time, the delta at the line, and the delta per
+sector. Sector deltas use the game's official sector times. Minus (green) = faster than the
+reference, plus (red) = slower.
+
+**Charts** (all against distance from the start line, all moving together):
+
+| Chart | How to read it |
+|---|---|
+| Time delta | Your time minus the reference's time *at that point of the lap*. Rising = losing time there; falling = gaining. Red shading = behind overall, blue = ahead. The value at the end is the lap-time difference. |
+| Speed | Blue = this lap, orange = reference. Where the blue line is lower, you are slower at that point. |
+| Throttle / Brake | Pedal application in % (the DualSense triggers). Earlier braking shows as the blue brake trace starting left of the orange one. |
+| Gear | Gear selected. |
+| Steering | −1 = full left, +1 = full right. With a controller, the game smooths the stick input, so read this one with care. |
+
+- Hover any chart (or the map) to read every value at that point, in the line above the
+  charts.
+- Drag across a chart to zoom into a stretch; all charts follow. "Reset zoom" goes back.
+- Vertical lines mark the sector 2 and sector 3 lines.
+
+**Track map:** drawn from your lap's own positions, and coloured by where you gain (blue)
+or lose (red) time against the reference, per 100 m. Grey means about equal: under 0.005 s
+per 100 m. Start/finish and sector lines are marked.
+
+**Biggest 200 m stretches:** the three stretches where you lost (or gained) the most time,
+with a zoom button. They are measured, not interpreted. The corner-by-corner explanation of
+*why* arrives in Stage 3.
+
+**Lap metrics:** top and average speed, full-throttle / braking / coasting share of the lap,
+gear changes, RPM, DRS, fuel, ERS, brake and tyre temperatures, for both laps. Hover a row for
+its exact definition. The theoretical best has no lap metrics, because it is made of several
+laps.
+
+How accurate is it? Both laps come from your own 60 Hz telemetry and the same game physics.
+Lap and sector times are the game's official values. Between frames (about 1.5 m apart at
+330 km/h) values are interpolated, so a delta at a point is accurate to a few milliseconds.
+
+### 3.3 Comparing in the terminal
+
+```bash
+uv run pitwall compare latest --lap 4 --ref theoretical_best
+```
+
+This prints the same comparison as text: lap vs reference, sector deltas, the biggest
+200 m losses and gains, and the lap metrics side by side. `--ref` takes `session_best`
+(default), `personal_best`, `theoretical_best` or `lap` (with `--ref-lap <#>`, and
+optionally `--ref-session <session>`).
+
 ---
 
 ## 4. Command reference
@@ -226,6 +318,9 @@ Common issues and notes:
 | `pitwall laps <session\|latest>` | Lap table for one session |
 | `pitwall export <session\|latest> [--lap #] [--out file.csv\|.parquet]` | Exports per-frame telemetry |
 | `pitwall decode <id> [--packet CAR_TELEMETRY] [--limit 1] [--skip N] [--all-cars]` | Prints decoded packets as JSON, to compare values with what the game shows |
+| `pitwall serve [--open] [--port 8000]` | Starts the web app (Lap Analysis) at http://127.0.0.1:8000; `--live-port` (default 20778) for the live status, `--no-live` to switch it off |
+| `pitwall compare <session\|latest> --lap # [--ref …]` | Compares a lap with a reference in the terminal |
+| `pitwall demo` | Creates a labelled synthetic demo session |
 | `pitwall version` | Version |
 
 All commands accept `--data-dir` (or the environment variable `PITWALL_DATA_DIR`) to use a
@@ -271,6 +366,12 @@ Everything stays on the Mac, by default in `~/PitwallData`:
 | `Cannot listen on UDP …:20777` | Another telemetry app or another capture is using the port; close it |
 | `ingest` says "skip … capture still running" | Stop that capture first (Ctrl+C), or name it explicitly if it crashed |
 | A capture crashed (power cut, terminal closed) | Its data up to the crash is fine. Run `uv run pitwall capture compact <id> --force`, then `uv run pitwall ingest <id>` |
+| `Cannot compare: out laps start or end in the pits` (or `not complete`) | Only complete flying laps start and end at the line; pick another lap |
+| `Cannot compare: this session has no usable lap` | The session has no clean lap to use as session best; choose "Another lap" or "Personal best" |
+| Lap Analysis shows no sessions | Run `uv run pitwall ingest` after recording (or `uv run pitwall demo` to try it) |
+| `pitwall serve` says the web UI is not built | You are on a development copy; see `web/README.md` |
+| Port 8000 already in use | `uv run pitwall serve --port 8010` and open that address |
+| Live pill always says "No live data" | `pitwall capture run` must be running (it forwards packets to UDP 20778) and the game must be sending |
 
 ---
 
@@ -316,3 +417,43 @@ packet loss (flashbacks and pauses are not counted as loss), gaps and sources.
 - Only your own car is decoded into laps; other cars' data stays in the raw recording.
 - A session split over two recordings is treated as two separate sessions.
 - The 2026 Season Pack UDP format is not supported (you drive the 2025 cars).
+
+### Stage 2: lap analysis and comparison (2026-11-14)
+
+**New**
+- `pitwall serve`: local web app with the **Lap Analysis** page. It has synchronised delta,
+  speed, throttle, brake, gear and steering charts against distance, a hover readout, drag
+  to zoom, a track map coloured by where time is gained and lost, the biggest 200 m
+  stretches, and lap metrics side by side. Dark and light themes. A basic live status pill
+  shows when the capture is running.
+- References: **session best**, **personal best** (same track and car class, across
+  sessions), **theoretical best** (best sectors stitched at the game's sector lines), or
+  any lap.
+- `pitwall compare`: the same comparison in the terminal.
+- Lap metrics with written definitions: top/average speed, full throttle, braking,
+  coasting, gear changes, RPM, DRS, fuel, ERS, brake and tyre temperatures.
+- `pitwall demo`: a synthetic demo session to explore the app without the PS5, labelled as
+  synthetic everywhere and never mixed with your real laps.
+
+**How it works:** every lap is placed on a common distance axis, from the start line (0 m)
+to the track length, every 1 m. Time comes from the game's own lap timer, so the delta at the
+line equals the lap-time difference exactly.
+
+**Checked:**
+- a lap against itself gives zero delta everywhere;
+- the delta at the line equals the lap-time difference;
+- against synthetic laps with exactly known timing, the delta is within 5 ms at every metre;
+- the biggest loss is found exactly where a mistake was injected (late throttle out of T4,
+  soft braking into T1);
+- the stitched theoretical best matches the sum of the best official sectors (within 3 ms).
+
+**Limitations**
+- Verified on synthetic laps; your real laps are the final check (Stage 1 acceptance test
+  first).
+- Comparisons are lap against lap of your own driving. The corner-by-corner analysis (braking
+  points, minimum speeds, throttle pickup) is Stage 3; real F1 drivers are Stage 4.
+- The map uses the game's world coordinates as they are, so it may appear rotated or mirrored
+  compared with an official track map.
+- Personal best requires the same game track ID and car class (formula); laps from different
+  game versions are not separated yet.
+

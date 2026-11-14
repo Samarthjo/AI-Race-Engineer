@@ -81,6 +81,7 @@ def ingest_capture(capture_dir: Path, data_dir: Path, conn: sqlite3.Connection) 
         read=read,
     )
 
+    synthetic = int(bool(manifest.get("synthetic")))
     out_root = data_dir / "sessions" / capture_id
     if out_root.exists():
         shutil.rmtree(out_root)
@@ -103,9 +104,13 @@ def ingest_capture(capture_dir: Path, data_dir: Path, conn: sqlite3.Connection) 
         details_path.write_text(
             json.dumps(details, indent=1, sort_keys=True, default=_json_default) + "\n"
         )
-        session_rows.append(
-            _session_row(key, capture_id, built, frames_path, details_path, data_dir)
-        )
+        row = _session_row(key, capture_id, built, frames_path, details_path, data_dir)
+        row["synthetic"] = synthetic
+        row["capture_label"] = manifest.get("label")
+        if synthetic:
+            row["track_name"] = "Synthetic test track"  # never shown as a real circuit
+            built.summary["track_name"] = row["track_name"]
+        session_rows.append(row)
         lap_rows.extend(_lap_row(key, lap) for lap in built.laps)
         result.sessions.append(SessionOutcome(key, built.summary, built.laps))
 
@@ -120,6 +125,7 @@ def ingest_capture(capture_dir: Path, data_dir: Path, conn: sqlite3.Connection) 
         "decoded": collected.decoded,
         "decode_errors": json.dumps(dict(collected.errors), sort_keys=True),
         "pipeline_version": PIPELINE_VERSION,
+        "synthetic": synthetic,
     }
     db.replace_capture(conn, capture_row, session_rows, lap_rows)
     return result

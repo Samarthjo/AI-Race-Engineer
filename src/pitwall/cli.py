@@ -626,5 +626,170 @@ def decode(
         console.print(f"No decodable {PacketId(pid).name} packets found.")
 
 
+# ------------------------------------------------------------------ analysis and UI
+
+
+@app.command("compare")
+def compare_cmd(
+    session: Annotated[str, typer.Argument(help="Session id (or unique part), or 'latest'")],
+    lap: Annotated[int, typer.Option(help="Lap index (# in `pitwall laps`)")],
+    ref: Annotated[
+        str,
+        typer.Option(help="session_best | personal_best | theoretical_best | lap"),
+    ] = "session_best",
+    ref_lap: Annotated[
+        int | None, typer.Option(help="With --ref lap: the reference lap index")
+    ] = None,
+    ref_session: Annotated[
+        str | None, typer.Option(help="With --ref lap: session of the reference lap")
+    ] = None,
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Compare a lap with a reference: time delta, sectors, where time is lost, lap metrics."""
+    from pitwall.analysis.compare import compare as run_compare
+    from pitwall.analysis.compare import resolve_reference
+    from pitwall.analysis.metrics import DEFINITIONS, load_lap_metrics
+    from pitwall.analysis.trace import NotComparableError, load_trace
+    from pitwall.storage import db
+
+    cfg = _load(config, data_dir)
+    conn = _db(cfg)
+    s = dict(_pick_session(conn, session))
+    lap_row = db.get_lap(conn, s["session_key"], lap)
+    if lap_row is None:
+        console.print(f"[red]No lap #{lap} in this session. See: pitwall laps {session}[/]")
+        raise typer.Exit(1)
+    ref_key = None
+    if ref == "lap":
+        ref_key = (
+            dict(_pick_session(conn, ref_session))["session_key"]
+            if ref_session
+            else s["session_key"]
+        )
+    try:
+        trace = load_trace(cfg.data_dir, s, dict(lap_row))
+        reference = resolve_reference(
+            conn, cfg.data_dir, s, ref, ref_session_key=ref_key, ref_lap_index=ref_lap
+        )
+        c = run_compare(trace, reference)
+    except NotComparableError as exc:
+        console.print(f"[red]Cannot compare: {exc}[/]")
+        raise typer.Exit(1) from None
+
+    ref_ms = reference.official_time_ms
+    lap_ms = lap_row["lap_time_ms"]
+    delta = (lap_ms - ref_ms) / 1000 if ref_ms else float(c.delta[-1])
+    sign = "[red]+" if delta > 0 else "[green]"
+    console.print(
+        f"[bold]{s['track_name']}[/] · lap {lap_row['lap_number']} {_fmt_ms(lap_ms)} vs "
+        f"{reference.label} {_fmt_ms(ref_ms)}  →  {sign}{delta:.3f} s[/]"
+    )
+    t = Table(title="Sectors (game's official times)")
+    for col in ("sector", "this lap", "reference", "delta"):
+        t.add_column(col)
+    for sec in c.sectors:
+        d = sec["delta_s"]
+        t.add_row(
+            f"S{sec['sector']}",
+            _fmt_ms(sec["lap_ms"]),
+            _fmt_ms(sec["ref_ms"]),
+            ("[red]+" if d > 0 else "[green]") + f"{d:.3f}[/]",
+        )
+    console.print(t)
+
+    def windows(title: str, rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            console.print(f"{title}: none above 0.010 s")
+            return
+        console.print(title + ":")
+        for w in rows:
+            console.print(f"  {w['start_m']:.0f}-{w['end_m']:.0f} m: {w['seconds']:+.3f} s")
+
+    windows("Largest losses over 200 m", c.largest_losses)
+    windows("Largest gains over 200 m", c.largest_gains)
+
+    lap_m = load_lap_metrics(cfg.data_dir, s, dict(lap_row))
+    ref_m: dict[str, Any] | None = None
+    if len(reference.sources) == 1:
+        src = reference.sources[0]
+        src_s = db.get_session(conn, src["session_key"])
+        src_l = db.get_lap(conn, src["session_key"], src["lap_index"])
+        if src_s is not None and src_l is not None:
+            ref_m = load_lap_metrics(cfg.data_dir, dict(src_s), dict(src_l))
+    mt = Table(title="Lap metrics")
+    for col in ("metric", "this lap", "reference"):
+        mt.add_column(col)
+    for key in DEFINITIONS:
+        mt.add_row(
+            DEFINITIONS[key],
+            str(lap_m.get(key)),
+            "-" if ref_m is None else str(ref_m.get(key)),
+        )
+    console.print(mt)
+    console.print(
+        "[dim]Delta = this lap minus reference; positive means slower. "
+        "Measured from your own laps (60 Hz).[/]"
+    )
+
+
+@app.command()
+def demo(
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Create a clearly labelled synthetic demo session, to explore the app without the PS5."""
+    from pitwall.ingest.pipeline import ingest_capture
+    from pitwall.synth.demo import write_demo_capture
+
+    cfg = _load(config, data_dir)
+    path = write_demo_capture(cfg.raw_dir)
+    res = ingest_capture(path, cfg.data_dir, _db(cfg))
+    s = res.sessions[0].summary
+    console.print(
+        f"Created [bold]{res.capture_id}[/]: {s['lap_count']} synthetic laps "
+        f"(session …{s['session_uid'][-8:]}). It is marked as synthetic everywhere and never "
+        "counts as your own lap."
+    )
+    console.print("Try: [bold]uv run pitwall laps latest[/]  or  [bold]uv run pitwall serve[/]")
+
+
+@app.command()
+def serve(
+    host: Annotated[str, typer.Option(help="Address to serve on")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Web UI / API port")] = 8000,
+    live_port: Annotated[
+        int, typer.Option(help="UDP port with the capture's forwarded copy")
+    ] = 20778,
+    no_live: Annotated[bool, typer.Option("--no-live", help="Disable the live status")] = False,
+    open_browser: Annotated[bool, typer.Option("--open", help="Open the browser")] = False,
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Start the local web app (Lap Analysis) and API."""
+    import threading
+    import webbrowser
+
+    import uvicorn
+
+    from pitwall.api.app import STATIC_DIR, create_app
+    from pitwall.api.live import LiveStatus
+
+    cfg = _load(config, data_dir)
+    live = None if no_live else LiveStatus("127.0.0.1", live_port)
+    application = create_app(cfg.data_dir, live)
+    url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}"
+    console.print(f"[bold green]Pitwall[/] running at {url}  (Ctrl+C to stop)")
+    if not (STATIC_DIR / "index.html").exists():
+        console.print("[yellow]Web UI not built; only the API is available (see web/README.md).[/]")
+    if live is not None:
+        console.print(
+            f"Live status listens on UDP {live_port} (the copy `pitwall capture run` forwards)."
+        )
+    if open_browser:
+        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+    uvicorn.run(application, host=host, port=port, log_level="warning")
+
+
 if __name__ == "__main__":
     app()

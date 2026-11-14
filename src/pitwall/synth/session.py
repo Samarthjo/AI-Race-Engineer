@@ -1,9 +1,15 @@
-"""Synthetic F1 25 session built with the real packet layouts (test fixture, not telemetry).
+"""Synthetic F1 25 session built with the real packet layouts (never real telemetry).
 
-A car drives laps on a circular "track" at constant speed. Every lap is described by a
-:class:`LapPlan`; scenario switches add a flashback, an invalidation, a pause or packet loss.
-The generator knows the true answer for every lap (time, sectors, validity), so the ingest
-pipeline can be checked exactly.
+Every lap is described by a :class:`LapPlan`. Two driving modes:
+
+* **constant speed** on a circle (``duration_s``): simple fixtures for lap bookkeeping;
+* **driver model** on the synthetic test track (``driver``, needs ``SessionSynth(track=...)``):
+  braking zones, corner speeds, throttle, gears and steering from
+  :func:`pitwall.synth.track.simulate_lap`.
+
+Scenario switches add a flashback, an invalidation, a pause or packet loss. The generator
+knows the true answer for every lap (time, sectors, validity, and for driver-model laps the
+exact time at every distance), so the pipeline can be checked exactly.
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ import numpy as np
 from pitwall.capture.rawlog import RawRecord
 from pitwall.f1udp import f125
 from pitwall.f1udp.header import PacketId
+from pitwall.synth.track import DriverProfile, LapProfile, Track, simulate_lap
 
 HZ = 60
 PLAYER = 3  # deliberately not 0, to prove the player index is honoured
@@ -24,8 +31,9 @@ PLAYER = 3  # deliberately not 0, to prove the player index is honoured
 
 @dataclass
 class LapPlan:
-    duration_s: float  # lap time (out-lap: time from pit exit to the line)
+    duration_s: float | None = None  # constant-speed lap time (out-lap: pit exit to line)
     kind: str = "flying"  # "out" (starts mid-track) | "flying"
+    driver: DriverProfile | None = None  # driver-model lap on the synthetic track
     invalid_from: float | None = None  # fraction of the lap where the lap becomes invalid
     flashback_at: float | None = None  # fraction the flashback rewinds to
     flashback_erased_s: float = 1.0  # driving that the flashback erases
@@ -46,6 +54,7 @@ class TrueLap:
     valid: bool
     frames: int  # canonical lap-data rows (after flashback truncation, minus dropped)
     dropped: int
+    profile: LapProfile | None = None  # driver-model laps: exact time at every distance
 
 
 @dataclass
@@ -81,14 +90,20 @@ class SessionSynth:
         game_mode: int = 5,  # Time Trial
         traction_control: int = 0,
         anti_lock_brakes: int = 0,
+        track: Track | None = None,
+        start_wall_ns: int | None = None,
     ):
         self.tc = traction_control
         self.abs = anti_lock_brakes
-        self.L = track_length
+        self.track = track
+        self.L = track.length if track is not None else track_length
+        self._profiles: dict[str, LapProfile] = {}  # keyed by repr(DriverProfile)
         self.track_id = track_id
         self.session_type = session_type
         self.game_mode = game_mode
         self.st = _State(session_uid)
+        if start_wall_ns is not None:
+            self.st.wall_ns = start_wall_ns
         self.history: list[tuple[int, int, int, int, int]] = []  # time, s1, s2, s3, flags
         self.fuel = 10.0
 
@@ -182,22 +197,22 @@ class SessionSynth:
     def _frame_packets(
         self,
         lap_num: int,
-        dist: float,
-        cur_ms: int,
+        st: dict[str, float],
         last_ms: int,
         s1: int,
         s2: int,
-        sector: int,
         invalid: int,
         driver_status: int,
-        speed_ms: float,
         k_frame: int,
     ) -> None:
+        dist = float(st["dist"])
+        speed_ms = float(st["speed"])
+        sector = 0 if dist < self.L / 3 else (1 if dist < 2 * self.L / 3 else 2)
         ld = _template(PacketId.LAP_DATA)
         self._header(ld, PacketId.LAP_DATA)
         car = ld["car"]
         car["last_lap_time_in_ms"][0, PLAYER] = last_ms
-        car["current_lap_time_in_ms"][0, PLAYER] = cur_ms
+        car["current_lap_time_in_ms"][0, PLAYER] = int(st["cur_ms"])
         car["sector1_time_ms_part"][0, PLAYER] = s1 % 60_000
         car["sector1_time_minutes_part"][0, PLAYER] = s1 // 60_000
         car["sector2_time_ms_part"][0, PLAYER] = s2 % 60_000
@@ -216,23 +231,21 @@ class SessionSynth:
         self._header(tel, PacketId.CAR_TELEMETRY)
         c = tel["car"]
         c["speed"][0, PLAYER] = round(speed_ms * 3.6)
-        c["throttle"][0, PLAYER] = 1.0
-        c["brake"][0, PLAYER] = 0.0
-        c["steer"][0, PLAYER] = 0.1
-        c["gear"][0, PLAYER] = 7
-        c["engine_rpm"][0, PLAYER] = 11_000
+        c["throttle"][0, PLAYER] = st["throttle"]
+        c["brake"][0, PLAYER] = st["brake"]
+        c["steer"][0, PLAYER] = st["steer"]
+        c["gear"][0, PLAYER] = int(st["gear"])
+        c["engine_rpm"][0, PLAYER] = round(float(st["rpm"]))
         c["tyres_surface_temperature"][0, PLAYER] = [95, 95, 100, 100]
         c["tyres_pressure"][0, PLAYER] = [21.6, 21.6, 23.1, 23.1]
         self._emit(tel)
 
         mo = _template(PacketId.MOTION)
         self._header(mo, PacketId.MOTION)
-        theta = 2 * math.pi * dist / self.L
-        r = self.L / (2 * math.pi)
         m = mo["car"]
-        m["world_position_x"][0, PLAYER] = r * math.cos(theta)
-        m["world_position_z"][0, PLAYER] = r * math.sin(theta)
-        m["g_force_lateral"][0, PLAYER] = speed_ms**2 / r / 9.81
+        m["world_position_x"][0, PLAYER] = st["x"]
+        m["world_position_z"][0, PLAYER] = st["z"]
+        m["g_force_lateral"][0, PLAYER] = st["g_lat"]
         self._emit(mo)
 
         stt = _template(PacketId.CAR_STATUS)
@@ -268,6 +281,22 @@ class SessionSynth:
         self.st.wall_ns += step
         self.fuel -= 0.0005
 
+    # ------------------------------------------------------------------- lap models
+
+    def _lap_model(self, plan: LapPlan) -> _LapModel:
+        d0 = 0.5 * self.L if plan.kind == "out" else 0.0
+        if plan.driver is not None:
+            if self.track is None:
+                raise ValueError("driver-model laps need SessionSynth(track=...)")
+            key = repr(plan.driver)
+            prof = self._profiles.get(key)
+            if prof is None:
+                prof = self._profiles[key] = simulate_lap(self.track, plan.driver)
+            return _ProfileLapModel(prof, d0)
+        if plan.duration_s is None:
+            raise ValueError("LapPlan needs duration_s or driver")
+        return _ConstantLapModel(self.L, plan.duration_s, d0)
+
     # ------------------------------------------------------------------- scenario
 
     def run(self, plans: list[LapPlan], final_partial: float | None = 0.4) -> SyntheticSession:
@@ -276,11 +305,15 @@ class SessionSynth:
         last_ms = 0
         lap_num = 1
         k_global = 0
+        b2, b3 = self.L / 3, 2 * self.L / 3
         for plan in plans:
-            n = round(plan.duration_s * HZ)
-            d0 = 0.5 * self.L if plan.kind == "out" else 0.0
-            speed = (self.L - d0) / plan.duration_s
-            s1 = s2 = 0
+            model = self._lap_model(plan)
+            n = model.frames
+            lap_ms = model.lap_ms
+            flying = plan.kind != "out"
+            s1_ms = model.official_ms(b2) if flying else 0
+            s2_ms = model.official_ms(b3) - s1_ms if flying else 0
+            s3_ms = lap_ms - s1_ms - s2_ms if flying else 0
             dropped = 0
             drop_lo = round(plan.drop_at * n) if plan.drop_at is not None else -1
             drop_hi = drop_lo + plan.drop_frames
@@ -288,33 +321,17 @@ class SessionSynth:
             flashed = False
             resume_state: tuple[int, float, float] | None = None
             while k < n:
-                dist = d0 + (self.L - d0) * k / n
-                cur_ms = round(k * 1000 / HZ)
-                if plan.kind != "out":
-                    if dist >= self.L / 3 and not s1:
-                        s1 = cur_ms
-                    if dist >= 2 * self.L / 3 and not s2:
-                        s2 = cur_ms - s1
-                sector = 0 if dist < self.L / 3 else (1 if dist < 2 * self.L / 3 else 2)
+                st = model.state(k)
+                dist = float(st["dist"])
+                s1 = s1_ms if flying and dist >= b2 else 0
+                s2 = s2_ms if flying and dist >= b3 else 0
                 invalid = int(plan.invalid_from is not None and k >= plan.invalid_from * n)
                 status = 3 if plan.kind == "out" else 1
 
                 if drop_lo <= k < drop_hi:
                     dropped += 1  # all packets of this frame lost on the network
                 else:
-                    self._frame_packets(
-                        lap_num,
-                        dist,
-                        cur_ms,
-                        last_ms,
-                        s1,
-                        s2,
-                        sector,
-                        invalid,
-                        status,
-                        speed,
-                        k_global,
-                    )
+                    self._frame_packets(lap_num, st, last_ms, s1, s2, invalid, status, k_global)
                 k_global += 1
 
                 if plan.flashback_at is not None and not flashed:
@@ -337,43 +354,122 @@ class SessionSynth:
                 self._tick(int(plan.pause_s * 1e9) if pause else 0)
                 k += 1
 
-            lap_ms = round(n * 1000 / HZ)
-            if plan.kind == "out":
-                s1_ms = s2_ms = s3_ms = 0
-            else:
-                s1_ms, s2_ms = s1, s2
-                s3_ms = lap_ms - s1_ms - s2_ms
             valid = plan.invalid_from is None and plan.kind != "out"
             flags = (0x01 if valid else 0) | 0x0E
             self.history.append((lap_ms, s1_ms, s2_ms, s3_ms, flags))
             true_laps.append(
                 TrueLap(
-                    lap_num, plan.kind, lap_ms, s1_ms, s2_ms, s3_ms, valid, n - dropped, dropped
+                    lap_num,
+                    plan.kind,
+                    lap_ms,
+                    s1_ms,
+                    s2_ms,
+                    s3_ms,
+                    valid,
+                    n - dropped,
+                    dropped,
+                    model.profile,
                 )
             )
             last_ms = lap_ms
             lap_num += 1
 
         if final_partial:
-            n = round(10 * HZ * final_partial)
-            for k in range(n):
-                dist = self.L * k / (10 * HZ)
-                self._frame_packets(
-                    lap_num,
-                    dist,
-                    round(k * 1000 / HZ),
-                    last_ms,
-                    0,
-                    0,
-                    0,
-                    0,
-                    1,
-                    self.L / 10,
-                    k_global,
-                )
+            last_plan = plans[-1] if plans else LapPlan(10.0)
+            partial_plan = LapPlan(
+                duration_s=last_plan.duration_s if last_plan.driver is None else None,
+                driver=last_plan.driver,
+            )
+            if partial_plan.driver is None:
+                partial_plan.duration_s = 10.0
+            model = self._lap_model(partial_plan)
+            for k in range(round(model.frames * final_partial)):
+                st = model.state(k)
+                self._frame_packets(lap_num, st, last_ms, 0, 0, 0, 1, k_global)
                 k_global += 1
                 self._tick()
         else:
             self._history_packet()
             self._event("SEND")
         return SyntheticSession(self.st.records, true_laps, self.st.session_uid, self.L)
+
+
+class _LapModel:
+    """Frame-by-frame state of one lap (k = frame index since the lap started)."""
+
+    frames: int
+    lap_ms: int
+    profile: LapProfile | None = None
+
+    def state(self, k: int) -> dict[str, float]:
+        raise NotImplementedError
+
+    def official_ms(self, d: float) -> int:
+        """Exact time (ms) at which the car crosses distance ``d`` (sector lines)."""
+        raise NotImplementedError
+
+
+class _ConstantLapModel(_LapModel):
+    def __init__(self, length: float, duration: float, d0: float):
+        self.L = length
+        self.d0 = d0
+        self.duration = duration
+        self.speed = (length - d0) / duration
+        self.frames = math.ceil(duration * HZ - 1e-9)
+        self.lap_ms = round(duration * 1000)
+
+    def state(self, k: int) -> dict[str, float]:
+        t = k / HZ
+        dist = self.d0 + self.speed * t
+        theta = 2 * math.pi * dist / self.L
+        r = self.L / (2 * math.pi)
+        return {
+            "dist": dist,
+            "cur_ms": round(t * 1000),
+            "speed": self.speed,
+            "throttle": 1.0,
+            "brake": 0.0,
+            "steer": 0.1,
+            "gear": 7,
+            "rpm": 11_000,
+            "x": r * math.cos(theta),
+            "z": r * math.sin(theta),
+            "g_lat": self.speed**2 / r / 9.81,
+        }
+
+    def official_ms(self, d: float) -> int:
+        return round((d - self.d0) / self.speed * 1000)
+
+
+class _ProfileLapModel(_LapModel):
+    def __init__(self, profile: LapProfile, d0: float):
+        self.profile = profile
+        self._prof = profile
+        self.t0 = profile.time_at(d0) if d0 > 0 else 0.0
+        duration = profile.lap_time - self.t0
+        self.frames = math.ceil(duration * HZ - 1e-9)
+        self.lap_ms = round(duration * 1000)
+
+    def state(self, k: int) -> dict[str, float]:
+        t = k / HZ
+        dist = float(self._prof.distance_at_time(self.t0 + t))
+        ch = self._prof.at(dist)
+        track = self._prof.track
+        kappa = float(np.interp(dist, track.s, track.curvature))
+        v = float(ch["speed"])
+        return {
+            "dist": dist,
+            "cur_ms": round(t * 1000),
+            "speed": v,
+            "throttle": float(ch["throttle"]),
+            "brake": float(ch["brake"]),
+            "steer": float(ch["steer"]),
+            "gear": int(ch["gear"]),
+            "rpm": float(ch["rpm"]),
+            "x": float(ch["x"]),
+            "z": float(ch["z"]),
+            "g_lat": v * v * kappa / 9.81,
+        }
+
+    def official_ms(self, d: float) -> int:
+        return round((self._prof.time_at(d) - self.t0) * 1000)

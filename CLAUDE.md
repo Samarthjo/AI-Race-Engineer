@@ -24,7 +24,8 @@ Personal F1 race engineer for F1 25 (PS5) telemetry. Runs locally on a Mac Mini 
    Never rewrite earlier entries.
 3. Update the status table in `README.md` and in the user guide.
 4. All checks must pass: `uv run ruff check .`, `uv run ruff format --check .`,
-   `uv run pyright`, `uv run pytest`.
+   `uv run pyright`, `uv run pytest`, and for UI changes `cd web && npm run build`
+   (the build output in `src/pitwall/api/static/` is committed; CI checks it is current).
 
 ## Principles (from the plan)
 
@@ -35,6 +36,10 @@ Personal F1 race engineer for F1 25 (PS5) telemetry. Runs locally on a Mac Mini 
   change, so `pitwall ingest` re-processes old recordings.
 - Keep raw data, calculated metrics and AI-generated text strictly separate.
 - Never assume F1 25 and real F1 physics are identical.
+- Synthetic data (`pitwall.synth`, `pitwall demo`) is always marked `synthetic` and must never
+  mix with real laps (personal bests, history).
+- UI colours follow the validated palette in `web/src/styles.css` (blue = this lap, orange =
+  reference, blue/red diverging for gain/loss); never use colour as the only cue.
 - F1 25 UDP layouts live in `src/pitwall/f1udp/f125.py` and are size-checked at import. Field
   names follow EA's spec in snake_case. Wheel order is RL, RR, FL, FR.
 
@@ -45,6 +50,10 @@ src/pitwall/capture/   UDP capture, raw log (L0), health checks, replay
 src/pitwall/f1udp/     packet layouts (f125.py), decoder, enum names
 src/pitwall/ingest/    sessions, flashback/pause handling, laps, frame tables (L1/L2)
 src/pitwall/storage/   SQLite catalogue
+src/pitwall/analysis/  distance-grid traces, delta, references, lap metrics (Stage 2)
+src/pitwall/api/       FastAPI app, live status, built UI in static/
+src/pitwall/synth/     synthetic track, driver model, sessions, demo (never real data)
 src/pitwall/cli.py     `pitwall` command
-tests/                 synthetic sessions with known answers (tests/synth_session.py)
+web/                   React + TypeScript UI (built into src/pitwall/api/static/)
+tests/                 tests against synthetic sessions with known answers
 ```

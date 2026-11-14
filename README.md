@@ -13,7 +13,7 @@ writes evidence-backed coaching reports. Runs locally on a Mac.
 |---|---|---|
 | 0 | Capture kit: raw UDP recording, forwarding, health checks, replay | done |
 | 1 | Packet decoder, sessions and laps | done (awaiting validation on real recordings) |
-| 2 | Lap processing, self-comparison, first UI | planned |
+| 2 | Lap processing, self-comparison, first UI | done (verified on synthetic laps) |
 | 3 | Track model, corner analysis engine | planned |
 | 4 | FastF1 reference, pro benchmark | planned |
 | 5 | Race engineer reports (deterministic, then local LLM) | planned |
@@ -68,6 +68,15 @@ writes evidence-backed coaching reports. Runs locally on a Mac.
    uv run pitwall laps latest
    ```
 
+8. Analyse laps in the browser (Lap Analysis page at http://127.0.0.1:8000):
+
+   ```bash
+   uv run pitwall serve --open
+   ```
+
+   No recordings yet? `uv run pitwall demo` creates a clearly labelled synthetic session to
+   explore the app.
+
 Then follow the recording checklist in [docs/golden-sessions.md](docs/golden-sessions.md).
 
 ## Commands
@@ -85,6 +94,9 @@ Then follow the recording checklist in [docs/golden-sessions.md](docs/golden-ses
 | `pitwall laps <session\|latest>` | Lap times, sectors, validity, flashbacks, data quality |
 | `pitwall export <session> --lap N` | Per-frame telemetry of a lap to CSV/Parquet |
 | `pitwall decode <id>` | Print decoded packets as JSON |
+| `pitwall serve` | Local web app: Lap Analysis (charts, track map, metrics) |
+| `pitwall compare <session> --lap N` | Lap vs session best / personal best / theoretical best, in the terminal |
+| `pitwall demo` | Synthetic demo session (labelled synthetic, never mixed with real laps) |
 
 ## Data
 
@@ -118,3 +130,6 @@ uv run ruff check . && uv run ruff format --check .
 ```bash
 uv run pyright
 ```
+
+The web UI lives in `web/` (React + TypeScript + Vite); its build is committed to
+`src/pitwall/api/static/` so the Mac needs no Node.js. See [web/README.md](web/README.md).

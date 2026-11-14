@@ -6,6 +6,7 @@ Unknown values are shown as ``"<kind> <value>"``; never guessed.
 from __future__ import annotations
 
 TRACKS: dict[int, str] = {
+    -1: "Unknown track",
     0: "Melbourne",
     2: "Shanghai",
     3: "Sakhir (Bahrain)",

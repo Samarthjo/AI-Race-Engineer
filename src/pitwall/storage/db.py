@@ -109,6 +109,12 @@ MIGRATIONS: dict[int, str] = {
     );
     """,
 }
+MIGRATIONS[2] = """
+    ALTER TABLE captures ADD COLUMN synthetic INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE sessions ADD COLUMN synthetic INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE sessions ADD COLUMN capture_label TEXT;
+    CREATE INDEX laps_usable ON laps(usable, lap_time_ms);
+"""
 SCHEMA_VERSION = max(MIGRATIONS)
 
 
@@ -195,3 +201,56 @@ def list_laps(conn: sqlite3.Connection, session_key: str) -> list[sqlite3.Row]:
 
 def to_json_text(value: Any) -> str | None:
     return _json(value)
+
+
+def get_session(conn: sqlite3.Connection, session_key: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM sessions WHERE session_key = ?", (session_key,)).fetchone()
+
+
+def get_lap(conn: sqlite3.Connection, session_key: str, lap_index: int) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM laps WHERE session_key = ? AND lap_index = ?", (session_key, lap_index)
+    ).fetchone()
+
+
+def best_usable_lap(conn: sqlite3.Connection, session_key: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM laps WHERE session_key = ? AND usable = 1 AND lap_time_ms IS NOT NULL "
+        "ORDER BY lap_time_ms, lap_index LIMIT 1",
+        (session_key,),
+    ).fetchone()
+
+
+def personal_best_lap(
+    conn: sqlite3.Connection, track_id: int | None, formula: int | None, synthetic: int
+) -> tuple[sqlite3.Row, sqlite3.Row] | None:
+    """Fastest usable lap on a track/car class over all sessions (real and synthetic apart)."""
+    row = conn.execute(
+        "SELECT l.session_key, l.lap_index FROM laps l JOIN sessions s USING (session_key) "
+        "WHERE s.track_id IS ? AND s.formula IS ? AND s.synthetic = ? AND l.usable = 1 "
+        "AND l.lap_time_ms IS NOT NULL ORDER BY l.lap_time_ms, s.first_utc LIMIT 1",
+        (track_id, formula, int(synthetic)),
+    ).fetchone()
+    if row is None:
+        return None
+    session = get_session(conn, row["session_key"])
+    lap = get_lap(conn, row["session_key"], row["lap_index"])
+    assert session is not None and lap is not None
+    return session, lap
+
+
+def best_sector_laps(
+    conn: sqlite3.Connection, session_key: str
+) -> tuple[tuple[sqlite3.Row, int], tuple[sqlite3.Row, int], tuple[sqlite3.Row, int]] | None:
+    """For each sector, the usable lap with the fastest official sector time."""
+    out = []
+    for col in ("s1_ms", "s2_ms", "s3_ms"):
+        row = conn.execute(
+            f"SELECT * FROM laps WHERE session_key = ? AND usable = 1 AND {col} IS NOT NULL "
+            f"ORDER BY {col}, lap_index LIMIT 1",
+            (session_key,),
+        ).fetchone()
+        if row is None:
+            return None
+        out.append((row, int(row[col])))
+    return out[0], out[1], out[2]

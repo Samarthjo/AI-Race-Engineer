@@ -1,6 +1,6 @@
 [project]
 name = "pitwall-ai"
-version = "0.1.0"
+version = "0.2.0"
 description = "Personal F1 race engineer: F1 25 telemetry capture, lap analysis and benchmarking."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -9,6 +9,8 @@ dependencies = [
     "zstandard>=0.22",
     "numpy>=2.0",
     "pyarrow>=16",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
 ]
 
 [project.scripts]
@@ -20,6 +22,7 @@ dev = [
     "hypothesis>=6.100",
     "ruff>=0.6",
     "pyright>=1.1.380",
+    "httpx2>=0.1",
 ]
 
 [build-system]
