@@ -403,8 +403,15 @@ losses with evidence → ranked next-lap instructions. LLM narration (5b) follow
 | 7 | **LLM: local first** | Local model on the Mac Mini M4 via **Ollama** (JSON-schema structured output + tool calling). The model is picked at Stage 5 by an eval on your laps, sized to the Mac's RAM. `LLMProvider` interface keeps a Claude API adapter as a later option, with no rewrite. Because local models are weaker, the deterministic report (5a) stays the source of truth and the grounding validator is mandatory. |
 | 8 | **Private GitHub repo** | `pitwall-ai`, private, created at the start of Stage 0. Code is pushed from here and pulled/run on your Mac. |
 
-**Still open (not blocking now):** Mac Mini RAM (16/24/32 GB), which caps the local model size and is needed by Stage 5;
-second track (end of Stage 3); GitHub account/repo name confirmation (at repo creation).
+**Resolved since approval:**
+- Hardware: Mac mini with **M4 Pro (12-core CPU, 16-core GPU, 16-core Neural Engine), 24 GB
+  unified memory**. For Stage 5, macOS and the app need part of that memory: plan on roughly
+  14–16 GB for the local model plus its context (a planning estimate, measured in Stage 5).
+  That points to mid-size instruct models (roughly 7–14B parameters, 4-bit quantised) with
+  tool calling. The final pick is made by the Stage 5 eval, not by size alone.
+- Code hosting: https://github.com/Samarthjo/AI-Race-Engineer
+
+**Still open (not blocking now):** second track (end of Stage 3).
 
 ## 11. Risks
 

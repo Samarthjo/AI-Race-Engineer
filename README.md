@@ -31,7 +31,7 @@ writes evidence-backed coaching reports. Runs locally on a Mac.
 2. Get the code and install it:
 
    ```bash
-   git clone <your private repo URL> pitwall-ai && cd pitwall-ai && uv sync
+   git clone https://github.com/Samarthjo/AI-Race-Engineer.git && cd AI-Race-Engineer && uv sync
    ```
 
 3. Check the Mac is ready and see which IP to enter on the PS5:

@@ -33,23 +33,23 @@ at the bottom.
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
 
-2. Download Pitwall and install it (replace the URL with your repository's):
+2. Download Pitwall and install it:
 
    ```bash
-   git clone https://github.com/<you>/pitwall-ai.git
+   git clone https://github.com/Samarthjo/AI-Race-Engineer.git
    ```
 
    ```bash
-   cd pitwall-ai && uv sync
+   cd AI-Race-Engineer && uv sync
    ```
 
-3. To update later, run this inside the `pitwall-ai` folder:
+3. To update later, run this inside the `AI-Race-Engineer` folder:
 
    ```bash
    git pull && uv sync
    ```
 
-Every command below is run from inside the `pitwall-ai` folder and starts with `uv run`.
+Every command below is run from inside the `AI-Race-Engineer` folder and starts with `uv run`.
 
 ### 1.2 Check the Mac
 

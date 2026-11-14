@@ -5,6 +5,18 @@ Personal F1 race engineer for F1 25 (PS5) telemetry. Runs locally on a Mac Mini 
 - **Plan and architecture:** `docs/plan.md` (approved). Work proceeds stage by stage.
 - **User guide:** `docs/user-guide.md`. It is a living document.
 
+## Agreed decisions and hardware
+
+- Cars: base **2025** cars, so the **F1 25 UDP format** (packetFormat 2025) and the **2025 FastF1
+  season** as reference. The 2026 Season Pack format is postponed.
+- Driver input: **DualSense controller**, **no assists**, Time Trial first, **Monza** first.
+- UI: React + TypeScript (Stage 2+). Backend: Python, FastAPI.
+- AI engineer: **local model first** (Ollama), behind an `LLMProvider` interface; Claude API
+  adapter later if needed.
+- Hardware: Mac mini **M4 Pro, 12-core CPU, 16-core GPU, 16-core Neural Engine, 24 GB**
+  unified memory. Budget roughly 14–16 GB for a local model plus context (to be measured).
+- Repository: https://github.com/Samarthjo/AI-Race-Engineer
+
 ## Rule: after every development stage (or user-visible change)
 
 1. Update the affected sections of `docs/user-guide.md` (commands, outputs, troubleshooting).
