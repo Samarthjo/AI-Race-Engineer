@@ -38,6 +38,9 @@ Personal F1 race engineer for F1 25 (PS5) telemetry. Runs locally on a Mac Mini 
 - Never assume F1 25 and real F1 physics are identical.
 - Synthetic data (`pitwall.synth`, `pitwall demo`) is always marked `synthetic` and must never
   mix with real laps (personal bests, history).
+- Findings are deterministic rules with documented thresholds (`analysis/findings.py`); each
+  keeps measurement and suggestion separate, and impacts within one corner may overlap.
+  Never emit a finding below its threshold or without the channels it needs.
 - UI colours follow the validated palette in `web/src/styles.css` (blue = this lap, orange =
   reference, blue/red diverging for gain/loss); never use colour as the only cue.
 - F1 25 UDP layouts live in `src/pitwall/f1udp/f125.py` and are size-checked at import. Field
@@ -50,7 +53,9 @@ src/pitwall/capture/   UDP capture, raw log (L0), health checks, replay
 src/pitwall/f1udp/     packet layouts (f125.py), decoder, enum names
 src/pitwall/ingest/    sessions, flashback/pause handling, laps, frame tables (L1/L2)
 src/pitwall/storage/   SQLite catalogue
-src/pitwall/analysis/  distance-grid traces, delta, references, lap metrics (Stage 2)
+src/pitwall/analysis/  traces, delta, references, lap metrics (Stage 2); corners, findings,
+                       consistency (Stage 3)
+src/pitwall/track/     track models: draft from a lap, JSON storage, confirm/rename
 src/pitwall/api/       FastAPI app, live status, built UI in static/
 src/pitwall/synth/     synthetic track, driver model, sessions, demo (never real data)
 src/pitwall/cli.py     `pitwall` command

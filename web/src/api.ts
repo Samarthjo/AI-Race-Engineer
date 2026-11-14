@@ -67,6 +67,11 @@ export type Comparison = {
   largest_losses: Window[];
   largest_gains: Window[];
   metric_definitions: Record<string, string>;
+  track_model: TrackModel | null;
+  track_model_error: string | null;
+  corners: SegmentResult[];
+  findings: Finding[];
+  corner_definitions: Record<string, string>;
   trace: {
     step_m: number;
     distance: number[];
@@ -77,6 +82,99 @@ export type Comparison = {
     lap: Record<string, Series>;
     ref: Record<string, Series>;
   };
+};
+
+export type SegmentDef = {
+  id: string;
+  name: string;
+  kind: "corner" | "complex" | "flat" | "straight";
+  start_m: number;
+  end_m: number;
+  apexes_m: number[];
+};
+
+export type TrackModel = {
+  key: string;
+  track_name: string;
+  status: "draft" | "confirmed";
+  version: number;
+  synthetic: boolean;
+  length_m: number;
+  source: { session_key?: string; lap_index?: number; lap_number?: number; lap_time_ms?: number };
+  updated_utc: string;
+  segments: SegmentDef[];
+};
+
+export type CornerMetrics = {
+  brake_onset_m: number | null;
+  brake_release_m: number | null;
+  braking_distance_m: number | null;
+  entry_speed_kmh: number | null;
+  peak_brake: number | null;
+  time_to_peak_s: number | null;
+  release_rate: number | null;
+  trail_brake_m: number;
+  lift_m: number | null;
+  min_speed_kmh: number;
+  min_speed_m: number;
+  gear_at_apex: number | null;
+  throttle_pickup_m: number | null;
+  full_throttle_m: number | null;
+  hesitation: number;
+  coasting_m: number;
+  exit_speed_kmh: number;
+  lockup_m: number | null;
+  wheelspin_m: number | null;
+};
+
+export type SegmentResult = {
+  segment: SegmentDef;
+  lap_time_s: number;
+  ref_time_s: number;
+  loss_s: number;
+  carried_s: number;
+  carried_to: string | null;
+  residual_s: number | null;
+  total_s: number;
+  phases: Record<string, number>;
+  phase_bounds_m: number[];
+  lap: CornerMetrics | null;
+  ref: CornerMetrics | null;
+};
+
+export type Finding = {
+  code: string;
+  segment_id: string;
+  segment_name: string;
+  title: string;
+  detail: string;
+  phase: string;
+  phases: string[];
+  time_impact_s: number;
+  confidence: "high" | "medium";
+  measured: Record<string, number | string | null>;
+  evidence: { start_m: number; end_m: number };
+  suggestion: string | null;
+};
+
+export type Consistency = {
+  track_model: TrackModel;
+  laps: number;
+  lap_numbers: number[];
+  ideal_lap_s: number | null;
+  note: string | null;
+  segments: {
+    id: string;
+    name: string;
+    kind: string;
+    best_s: number;
+    best_lap_number: number;
+    mean_s: number;
+    worst_s: number;
+    std_s: number;
+    inconsistent: boolean;
+    times_s: number[];
+  }[];
 };
 
 export type LiveStatus = {
@@ -101,11 +199,15 @@ export class ApiError extends Error {
   }
 }
 
-async function get<T>(path: string, params: Record<string, string | number | undefined> = {}) {
+async function get<T>(
+  path: string,
+  params: Record<string, string | number | undefined> = {},
+  init?: RequestInit,
+) {
   const query = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined) query.set(k, String(v));
   const qs = query.toString();
-  const res = await fetch(`api/${path}${qs ? `?${qs}` : ""}`);
+  const res = await fetch(`api/${path}${qs ? `?${qs}` : ""}`, init);
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -125,4 +227,7 @@ export const api = {
   compare: (p: { session: string; lap: number; ref: string; ref_session?: string; ref_lap?: number }) =>
     get<Comparison>("compare", p),
   live: () => get<LiveStatus>("live"),
+  consistency: (session: string) => get<Consistency>("consistency", { session }),
+  confirmTrack: (key: string) =>
+    get<TrackModel>(`tracks/${encodeURIComponent(key)}/confirm`, {}, { method: "POST" }),
 };

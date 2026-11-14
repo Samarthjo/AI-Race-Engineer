@@ -20,11 +20,17 @@ from fastapi.staticfiles import StaticFiles
 
 from pitwall import __version__
 from pitwall.analysis.compare import REFERENCE_KINDS, Comparison, compare, resolve_reference
+from pitwall.analysis.consistency import session_consistency
+from pitwall.analysis.corners import DEFINITIONS as CORNER_DEFINITIONS
+from pitwall.analysis.corners import analyse_corners
+from pitwall.analysis.findings import lap_findings
 from pitwall.analysis.metrics import DEFINITIONS, load_lap_metrics
 from pitwall.analysis.trace import NotComparableError, check_comparable, load_trace
 from pitwall.api.live import LiveStatus
 from pitwall.ingest.pipeline import DB_NAME
 from pitwall.storage import db
+from pitwall.track.model import TrackModel, confirm_model, list_models
+from pitwall.track.service import model_for_session
 
 STATIC_DIR = Path(__file__).parent / "static"
 TRACE_CHANNELS = ("speed", "throttle", "brake", "gear", "steer", "rpm")
@@ -146,6 +152,30 @@ def comparison_payload(
     }
 
 
+def model_payload(m: TrackModel) -> dict[str, Any]:
+    return {
+        "key": m.key,
+        "track_name": m.track_name,
+        "status": m.status,
+        "version": m.version,
+        "synthetic": m.synthetic,
+        "length_m": m.length_m,
+        "source": m.source,
+        "updated_utc": m.updated_utc,
+        "segments": [
+            {
+                "id": seg.id,
+                "name": seg.name,
+                "kind": seg.kind,
+                "start_m": seg.start_m,
+                "end_m": seg.end_m,
+                "apexes_m": seg.apexes_m,
+            }
+            for seg in m.segments
+        ],
+    }
+
+
 def create_app(data_dir: Path, live: LiveStatus | None = None) -> FastAPI:
     data_dir = Path(data_dir)
 
@@ -230,7 +260,46 @@ def create_app(data_dir: Path, live: LiveStatus | None = None) -> FastAPI:
                 src_lap = db.get_lap(conn, src["session_key"], src["lap_index"])
                 if src_session and src_lap is not None:
                     ref_metrics = load_lap_metrics(data_dir, src_session, dict(src_lap))
-        return comparison_payload(comparison, s, lap_d, lap_metrics, ref_metrics, step)
+            payload = comparison_payload(comparison, s, lap_d, lap_metrics, ref_metrics, step)
+            payload["track_model"] = None
+            payload["track_model_error"] = None
+            payload["corners"] = []
+            payload["findings"] = []
+            payload["corner_definitions"] = CORNER_DEFINITIONS
+            try:
+                model = model_for_session(conn, data_dir, s)
+            except NotComparableError as exc:
+                payload["track_model_error"] = str(exc)
+            else:
+                analysis = analyse_corners(comparison, model)
+                payload["track_model"] = model_payload(model)
+                payload["corners"] = [r.to_dict() for r in analysis.segments]
+                payload["findings"] = [f.to_dict() for f in lap_findings(analysis)]
+        return payload
+
+    @app.get("/api/consistency")
+    def consistency(session: str) -> dict[str, Any]:
+        with database() as conn:
+            s = find_session(conn, session)
+            try:
+                model = model_for_session(conn, data_dir, s)
+            except NotComparableError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            return {
+                "track_model": model_payload(model),
+                **session_consistency(conn, data_dir, s, model),
+            }
+
+    @app.get("/api/tracks")
+    def tracks() -> list[dict[str, Any]]:
+        return [model_payload(m) for m in list_models(data_dir)]
+
+    @app.post("/api/tracks/{key}/confirm")
+    def confirm_track(key: str) -> dict[str, Any]:
+        try:
+            return model_payload(confirm_model(data_dir, key))
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(404, str(exc)) from exc
 
     @app.get("/api/live")
     def live_status() -> dict[str, Any]:

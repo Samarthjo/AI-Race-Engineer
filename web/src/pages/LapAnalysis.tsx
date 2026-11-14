@@ -1,5 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiError, type Comparison, type Lap, type Session, type Window } from "../api";
+import {
+  api,
+  ApiError,
+  type Comparison,
+  type Consistency,
+  type Finding,
+  type Lap,
+  type SegmentResult,
+  type Session,
+  type Window,
+} from "../api";
+import { CornerTable } from "../components/CornerTable";
+import { Findings } from "../components/Findings";
 import { MetricsTable } from "../components/MetricsTable";
 import { TelemetryCharts, type ChartsHandle } from "../components/TelemetryCharts";
 import { TrackMap } from "../components/TrackMap";
@@ -43,6 +55,10 @@ export function LapAnalysis({ theme }: { theme: string }) {
   const [loading, setLoading] = useState(false);
   const [hover, setHover] = useState<number | null>(null);
   const [zoomed, setZoomed] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [consistency, setConsistency] = useState<Consistency | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [reload, setReload] = useState(0);
   const charts = useRef<ChartsHandle>(null);
 
   useEffect(() => {
@@ -86,6 +102,7 @@ export function LapAnalysis({ theme }: { theme: string }) {
         setData(c);
         setError(null);
         setZoomed(false);
+        setSelected(null);
       })
       .catch((e: Error) => {
         if (cancelled) return;
@@ -95,7 +112,49 @@ export function LapAnalysis({ theme }: { theme: string }) {
     return () => {
       cancelled = true;
     };
-  }, [sessionKey, lapIndex, refKind, refLap]);
+  }, [sessionKey, lapIndex, refKind, refLap, reload]);
+
+  const modelVersion = data?.track_model ? `${data.track_model.key}:${data.track_model.version}` : null;
+  useEffect(() => {
+    if (!sessionKey || !modelVersion) return;
+    let cancelled = false;
+    api
+      .consistency(sessionKey)
+      .then((c) => !cancelled && setConsistency(c))
+      .catch(() => !cancelled && setConsistency(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionKey, modelVersion]);
+
+  const confirmTrack = async () => {
+    if (!data?.track_model) return;
+    setConfirming(true);
+    try {
+      await api.confirmTrack(data.track_model.key);
+      setReload((n) => n + 1);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const zoomRange = (start: number, end: number) => {
+    charts.current?.zoom(Math.max(0, start), end);
+    setZoomed(true);
+    document.getElementById("telemetry")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const selectSegment = (r: SegmentResult) => {
+    setSelected(r.segment.id);
+    zoomRange(r.segment.start_m - 40, r.segment.end_m + (r.carried_s ? 200 : 60));
+  };
+
+  const showFinding = (f: Finding) => {
+    setSelected(f.segment_id);
+    zoomRange(f.evidence.start_m - 80, f.evidence.end_m + 80);
+  };
 
   const hoverFromMap = useCallback((i: number | null) => {
     setHover(i);
@@ -183,6 +242,24 @@ export function LapAnalysis({ theme }: { theme: string }) {
           {error}
         </div>
       )}
+      {data?.track_model?.status === "draft" && (
+        <div className="banner info" role="note">
+          <span>
+            Corners were detected automatically from lap {data.track_model.source.lap_number ?? "?"} (draft, version{" "}
+            {data.track_model.version}). Check the corner labels on the map and the rows of the corner table; if they
+            look right, confirm them so every lap is cut the same way. Names and boundaries can be edited in{" "}
+            <code>tracks/{data.track_model.key}.json</code> in your data folder.
+          </span>
+          <button className="btn" onClick={confirmTrack} disabled={confirming}>
+            {confirming ? "Confirming…" : "Confirm corners"}
+          </button>
+        </div>
+      )}
+      {data?.track_model_error && (
+        <div className="error" role="alert">
+          Corner analysis unavailable: {data.track_model_error}
+        </div>
+      )}
       {laps.length > 0 && comparable.length === 0 && (
         <div className="error">This session has no complete flying lap to analyse (out-laps and incomplete laps are excluded).</div>
       )}
@@ -191,7 +268,8 @@ export function LapAnalysis({ theme }: { theme: string }) {
         <div className={loading ? "stale" : undefined}>
           <Summary data={data} />
           <div className="analysis">
-            <section className="card" aria-label="Telemetry">
+            <div className="main-col">
+            <section className="card" aria-label="Telemetry" id="telemetry">
               <div className="charts-head">
                 <div className="legend">
                   <span>
@@ -221,10 +299,35 @@ export function LapAnalysis({ theme }: { theme: string }) {
               <Readout data={data} index={hover} />
               <TelemetryCharts ref={charts} data={data} theme={theme} onHover={setHover} />
             </section>
+            {data.corners.length > 0 && (
+              <section className="card" aria-label="Corners">
+                <h2>Corner by corner</h2>
+                <CornerTable
+                  segments={data.corners}
+                  consistency={consistency}
+                  onSelect={selectSegment}
+                  selected={selected}
+                  definitions={data.corner_definitions}
+                />
+              </section>
+            )}
+            </div>
             <aside className="side">
+              {data.track_model && (
+                <section className="card" aria-label="Findings">
+                  <h2>Findings</h2>
+                  <Findings findings={data.findings} onShow={showFinding} selected={selected} />
+                </section>
+              )}
               <section className="card" aria-label="Track map">
                 <h2>Where time is gained and lost</h2>
-                <TrackMap data={data} hoverIndex={hover} onHover={hoverFromMap} />
+                <TrackMap
+                  data={data}
+                  hoverIndex={hover}
+                  onHover={hoverFromMap}
+                  segments={data.track_model?.segments ?? []}
+                  selected={selected}
+                />
               </section>
               <section className="card" aria-label="Largest changes">
                 <h2>Biggest 200 m stretches</h2>

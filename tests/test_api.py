@@ -142,3 +142,32 @@ def test_live_listener_receives_udp():
         assert live.snapshot()["receiving"] is True
     finally:
         live.stop()
+
+
+def test_compare_includes_corners_and_findings(client):
+    c, key = client
+    body = c.get("/api/compare", params={"session": key, "lap": 4}).json()
+    tm = body["track_model"]
+    assert tm["status"] in ("draft", "confirmed") and len(tm["segments"]) == 13
+    assert len(body["corners"]) == 13
+    total = sum(r["total_s"] for r in body["corners"])
+    assert total == pytest.approx(
+        body["corners"] and sum(r["loss_s"] for r in body["corners"]), abs=0.01
+    )
+    codes = {f["code"] for f in body["findings"]}
+    assert "LATE_THROTTLE" in codes and "LOCKUP" in codes
+    for f in body["findings"]:
+        assert set(f) >= {"code", "segment_id", "detail", "time_impact_s", "confidence", "evidence"}
+    assert "brake_onset_m" in body["corner_definitions"]
+
+
+def test_consistency_tracks_and_confirm(client):
+    c, key = client
+    cons = c.get("/api/consistency", params={"session": key}).json()
+    assert cons["laps"] >= 3 and cons["ideal_lap_s"] is not None
+    tracks = c.get("/api/tracks").json()
+    assert len(tracks) == 1
+    k = tracks[0]["key"]
+    r = c.post(f"/api/tracks/{k}/confirm")
+    assert r.status_code == 200 and r.json()["status"] == "confirmed"
+    assert c.post("/api/tracks/nope/confirm").status_code == 404

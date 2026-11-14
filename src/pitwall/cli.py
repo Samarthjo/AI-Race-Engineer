@@ -27,6 +27,10 @@ from pitwall.netinfo import local_ipv4s, udp_port_available
 app = typer.Typer(no_args_is_help=True, help="Pitwall AI: personal F1 race engineer.")
 capture_app = typer.Typer(no_args_is_help=True, help="Record and inspect raw F1 25 UDP telemetry.")
 app.add_typer(capture_app, name="capture")
+track_app = typer.Typer(
+    no_args_is_help=True, help="Track models: corners and straights of a circuit."
+)
+app.add_typer(track_app, name="track")
 
 console = Console()
 
@@ -789,6 +793,298 @@ def serve(
     if open_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     uvicorn.run(application, host=host, port=port, log_level="warning")
+
+
+# ---------------------------------------------------------------- corners and tracks
+
+
+def _m(v: float | None, digits: int = 0) -> str:
+    return "-" if v is None else f"{v:.{digits}f}"
+
+
+def _signed(v: float | None, digits: int = 3) -> str:
+    if v is None:
+        return "-"
+    color = "red" if v > 0.0005 else ("green" if v < -0.0005 else "white")
+    return f"[{color}]{v:+.{digits}f}[/]"
+
+
+@app.command("corners")
+def corners_cmd(
+    session: Annotated[str, typer.Argument(help="Session id (or unique part), or 'latest'")],
+    lap: Annotated[int, typer.Option(help="Lap index (# in `pitwall laps`)")],
+    ref: Annotated[
+        str, typer.Option(help="session_best | personal_best | theoretical_best | lap")
+    ] = "session_best",
+    ref_lap: Annotated[int | None, typer.Option(help="With --ref lap: reference lap index")] = None,
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Corner-by-corner analysis of a lap: where time is lost and why (measured findings)."""
+    from pitwall.analysis.compare import compare as run_compare
+    from pitwall.analysis.compare import resolve_reference
+    from pitwall.analysis.corners import analyse_corners
+    from pitwall.analysis.findings import lap_findings
+    from pitwall.analysis.trace import NotComparableError, load_trace
+    from pitwall.storage import db
+    from pitwall.track.service import model_for_session
+
+    cfg = _load(config, data_dir)
+    conn = _db(cfg)
+    s = dict(_pick_session(conn, session))
+    lap_row = db.get_lap(conn, s["session_key"], lap)
+    if lap_row is None:
+        console.print(f"[red]No lap #{lap} in this session.[/]")
+        raise typer.Exit(1)
+    try:
+        trace = load_trace(cfg.data_dir, s, dict(lap_row))
+        reference = resolve_reference(
+            conn, cfg.data_dir, s, ref, ref_session_key=s["session_key"], ref_lap_index=ref_lap
+        )
+        comparison = run_compare(trace, reference)
+        model = model_for_session(conn, cfg.data_dir, s)
+    except NotComparableError as exc:
+        console.print(f"[red]Cannot analyse: {exc}[/]")
+        raise typer.Exit(1) from None
+    analysis = analyse_corners(comparison, model)
+    console.print(
+        f"[bold]{s['track_name']}[/] · lap {lap_row['lap_number']} vs {reference.label} · "
+        f"delta {_signed(analysis.lap_delta_s)} s"
+    )
+    status = "[yellow]draft[/]" if model.status == "draft" else "[green]confirmed[/]"
+    console.print(
+        f"Track model [bold]{model.key}[/] v{model.version} ({status}): "
+        f"{len(model.corners)} corners"
+        + (
+            "  [dim]check with `pitwall track show`, then `pitwall track confirm`[/]"
+            if model.status == "draft"
+            else ""
+        )
+    )
+    t = Table(title="Corners (lap / reference)")
+    for col in (
+        "segment",
+        "time lost",
+        "of which exit carry",
+        "brake point",
+        "entry km/h",
+        "min km/h",
+        "full throttle",
+        "exit km/h",
+    ):
+        t.add_column(col)
+    for r in analysis.segments:
+        seg = r.segment
+        if not seg.is_corner:
+            t.add_row(f"[dim]{seg.name}[/]", _signed(r.total_s), "", "", "", "", "", "")
+            continue
+        a, b = r.lap, r.ref
+        assert a is not None and b is not None
+        bp = (
+            "-"
+            if a.brake_onset_m is None or b.brake_onset_m is None
+            else (
+                f"{b.brake_onset_m - a.brake_onset_m:.0f} m earlier"
+                if a.brake_onset_m < b.brake_onset_m - 2.0
+                else (
+                    f"{a.brake_onset_m - b.brake_onset_m:.0f} m later"
+                    if a.brake_onset_m > b.brake_onset_m + 2.0
+                    else "same"
+                )
+            )
+        )
+        ft = (
+            "-"
+            if a.full_throttle_m is None or b.full_throttle_m is None
+            else f"{a.full_throttle_m - b.full_throttle_m:+.0f} m"
+        )
+        t.add_row(
+            f"[bold]{seg.name}[/] [dim]{seg.kind}[/]",
+            _signed(r.total_s),
+            _signed(r.carried_s) if r.carried_s else "",
+            bp,
+            f"{_m(a.entry_speed_kmh)} / {_m(b.entry_speed_kmh)}",
+            f"{_m(a.min_speed_kmh)} / {_m(b.min_speed_kmh)}",
+            ft,
+            f"{_m(a.exit_speed_kmh)} / {_m(b.exit_speed_kmh)}",
+        )
+    console.print(t)
+    console.print(
+        f"[dim]Segments add up to {analysis.accounted_s():+.3f} s "
+        f"(lap delta {analysis.lap_delta_s:+.3f} s).[/]"
+    )
+    findings = lap_findings(analysis)
+    if not findings:
+        console.print("No findings: no measured difference above the thresholds.")
+        return
+    console.print("[bold]Findings[/] (biggest first; impacts within one corner can overlap):")
+    for i, f in enumerate(findings, 1):
+        console.print(
+            f" {i}. [bold]{f.segment_name}[/] · {f.title} · {_signed(f.time_impact_s)} s · "
+            f"{f.confidence} confidence"
+        )
+        console.print(f"    {f.detail}")
+        if f.suggestion:
+            console.print(f"    [cyan]Try:[/] {f.suggestion}")
+
+
+def _resolve_track(conn: Any, cfg: Config, key_or_session: str) -> str:
+    """A track model key as given, or the key of the track a session was driven on."""
+    from pitwall.track.model import load_model
+    from pitwall.track.service import session_track_key
+
+    try:
+        if load_model(cfg.data_dir, key_or_session) is not None:
+            return key_or_session
+    except ValueError:
+        pass  # not a valid key: treat it as a session id
+    return session_track_key(dict(_pick_session(conn, key_or_session)))
+
+
+@track_app.command("list")
+def track_list(config: ConfigOpt = None, data_dir: DataDirOpt = None) -> None:
+    """List saved track models."""
+    from pitwall.track.model import list_models
+
+    cfg = _load(config, data_dir)
+    models = list_models(cfg.data_dir)
+    if not models:
+        console.print(
+            "No track models yet; one is drafted automatically the first time you "
+            "analyse corners (or run `pitwall track draft <session>`)."
+        )
+        return
+    t = Table()
+    for col in ("key", "track", "status", "version", "corners", "length m", "drafted from"):
+        t.add_column(col)
+    for m in models:
+        src = m.source or {}
+        t.add_row(
+            m.key,
+            m.track_name,
+            m.status,
+            str(m.version),
+            str(len(m.corners)),
+            f"{m.length_m:.0f}",
+            f"lap {src.get('lap_number', '?')} · {src.get('session_key', '')}",
+        )
+    console.print(t)
+
+
+@track_app.command("show")
+def track_show(
+    track: Annotated[str, typer.Argument(help="Track model key, or a session id")],
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Show the segments of a track model."""
+    from pitwall.track.model import load_model, model_path
+
+    cfg = _load(config, data_dir)
+    key = _resolve_track(_db(cfg), cfg, track)
+    m = load_model(cfg.data_dir, key)
+    if m is None:
+        console.print(f"[red]No track model {key}. Draft one: pitwall track draft <session>[/]")
+        raise typer.Exit(1)
+    console.print(
+        f"[bold]{m.key}[/] · {m.track_name} · {m.status} v{m.version} · "
+        f"{m.length_m:.0f} m · file {model_path(cfg.data_dir, key)}"
+    )
+    errors = m.validate()
+    for e in errors:
+        console.print(f"[red]{e}[/]")
+    t = Table()
+    for col in ("id", "name", "kind", "from m", "to m", "apex m"):
+        t.add_column(col)
+    for seg in m.segments:
+        t.add_row(
+            seg.id,
+            seg.name,
+            seg.kind,
+            f"{seg.start_m:.0f}",
+            f"{seg.end_m:.0f}",
+            ", ".join(f"{a:.0f}" for a in seg.apexes_m),
+        )
+    console.print(t)
+
+
+@track_app.command("draft")
+def track_draft(
+    session: Annotated[str, typer.Argument(help="Session id (or unique part), or 'latest'")],
+    lap: Annotated[int | None, typer.Option(help="Lap index to detect corners from")] = None,
+    force: Annotated[bool, typer.Option(help="Replace an existing (even confirmed) model")] = False,
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Detect corners automatically from a fast lap and save them as a draft model."""
+    from pitwall.analysis.trace import NotComparableError
+    from pitwall.track.model import load_model, save_model
+    from pitwall.track.service import draft_for_session, session_track_key
+
+    cfg = _load(config, data_dir)
+    conn = _db(cfg)
+    s = dict(_pick_session(conn, session))
+    key = session_track_key(s)
+    existing = load_model(cfg.data_dir, key)
+    if existing is not None and not force:
+        console.print(
+            f"[yellow]{key} already exists ({existing.status} v{existing.version}). "
+            "Use --force to replace it.[/]"
+        )
+        raise typer.Exit(1)
+    try:
+        m = draft_for_session(conn, cfg.data_dir, s, lap)
+    except NotComparableError as exc:
+        console.print(f"[red]Cannot draft: {exc}[/]")
+        raise typer.Exit(1) from None
+    if existing is not None:
+        m.version = existing.version + 1
+    path = save_model(cfg.data_dir, m)
+    console.print(f"Drafted [bold]{m.key}[/]: {len(m.corners)} corners → {path}")
+    console.print(
+        "Check it with `pitwall track show` (or on the map in `pitwall serve`), "
+        "then `pitwall track confirm`."
+    )
+
+
+@track_app.command("confirm")
+def track_confirm(
+    track: Annotated[str, typer.Argument(help="Track model key, or a session id")],
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Mark a track model as checked; it is then used unchanged for every lap."""
+    from pitwall.track.model import confirm_model
+
+    cfg = _load(config, data_dir)
+    key = _resolve_track(_db(cfg), cfg, track)
+    try:
+        m = confirm_model(cfg.data_dir, key)
+    except FileNotFoundError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1) from None
+    console.print(f"[green]{m.key} confirmed[/] (v{m.version}, {len(m.corners)} corners).")
+
+
+@track_app.command("rename")
+def track_rename(
+    track: Annotated[str, typer.Argument(help="Track model key, or a session id")],
+    segment: Annotated[str, typer.Argument(help="Segment id, e.g. c3")],
+    name: Annotated[str, typer.Argument(help="New name")],
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Rename a corner or straight."""
+    from pitwall.track.model import rename_segment
+
+    cfg = _load(config, data_dir)
+    key = _resolve_track(_db(cfg), cfg, track)
+    try:
+        m = rename_segment(cfg.data_dir, key, segment, name)
+    except (FileNotFoundError, KeyError) as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1) from None
+    console.print(f"Renamed {segment} in {m.key} (v{m.version}).")
 
 
 if __name__ == "__main__":

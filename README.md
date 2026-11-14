@@ -14,7 +14,7 @@ writes evidence-backed coaching reports. Runs locally on a Mac.
 | 0 | Capture kit: raw UDP recording, forwarding, health checks, replay | done |
 | 1 | Packet decoder, sessions and laps | done (awaiting validation on real recordings) |
 | 2 | Lap processing, self-comparison, first UI | done (verified on synthetic laps) |
-| 3 | Track model, corner analysis engine | planned |
+| 3 | Track model, corner analysis engine | done (verified on synthetic laps) |
 | 4 | FastF1 reference, pro benchmark | planned |
 | 5 | Race engineer reports (deterministic, then local LLM) | planned |
 | 6 | Live telemetry | planned |
@@ -97,6 +97,8 @@ Then follow the recording checklist in [docs/golden-sessions.md](docs/golden-ses
 | `pitwall serve` | Local web app: Lap Analysis (charts, track map, metrics) |
 | `pitwall compare <session> --lap N` | Lap vs session best / personal best / theoretical best, in the terminal |
 | `pitwall demo` | Synthetic demo session (labelled synthetic, never mixed with real laps) |
+| `pitwall corners <session> --lap N` | Corner-by-corner time loss and findings |
+| `pitwall track list\|show\|draft\|confirm\|rename` | Track models (detected corners) |
 
 ## Data
 

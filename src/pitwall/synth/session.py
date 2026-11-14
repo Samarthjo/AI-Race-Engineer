@@ -262,6 +262,8 @@ class SessionSynth:
         mx = _template(PacketId.MOTION_EX)
         self._header(mx, PacketId.MOTION_EX)
         mx["player"]["wheel_speed"][0] = [speed_ms] * 4
+        rear, front = float(st.get("slip_rear", 0.0)), float(st.get("slip_front", 0.0))
+        mx["player"]["wheel_slip_ratio"][0] = [rear, rear, front, front]  # RL, RR, FL, FR
         self._emit(mx)
 
         if k_frame % 6 == 0:
@@ -469,6 +471,8 @@ class _ProfileLapModel(_LapModel):
             "x": float(ch["x"]),
             "z": float(ch["z"]),
             "g_lat": v * v * kappa / 9.81,
+            "slip_front": float(ch["slip_front"]),
+            "slip_rear": float(ch["slip_rear"]),
         }
 
     def official_ms(self, d: float) -> int:

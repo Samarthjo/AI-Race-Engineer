@@ -171,6 +171,9 @@ class DriverProfile:
     brake_scale: dict[int, float] = field(default_factory=dict)  # <1: brakes earlier, softer
     corner_speed_scale: dict[int, float] = field(default_factory=dict)  # <1: slower in corner
     throttle_delay_m: dict[int, float] = field(default_factory=dict)  # metres of extra coasting
+    brake_early_m: dict[int, float] = field(default_factory=dict)  # same braking, N m earlier
+    lockup_m: dict[int, float] = field(default_factory=dict)  # front lock-up, last N m of braking
+    wheelspin_m: dict[int, float] = field(default_factory=dict)  # rear wheelspin, N m on exit
     grip_scale: float = 1.0
 
 
@@ -187,6 +190,8 @@ class LapProfile:
     rpm: np.ndarray
     steer: np.ndarray
     lap_time: float
+    slip_front: np.ndarray  # wheel slip ratio, front wheels (negative = locking)
+    slip_rear: np.ndarray  # wheel slip ratio, rear wheels (positive = spinning)
 
     def at(self, d: np.ndarray | float) -> dict[str, np.ndarray]:
         s = self.track.s
@@ -201,6 +206,8 @@ class LapProfile:
             "rpm": np.interp(d, s, self.rpm),
             "x": np.interp(d, s, self.track.x),
             "z": np.interp(d, s, self.track.z),
+            "slip_front": np.interp(d, s, self.slip_front),
+            "slip_rear": np.interp(d, s, self.slip_rear),
         }
 
     def distance_at_time(self, t: np.ndarray | float) -> np.ndarray:
@@ -238,6 +245,11 @@ def simulate_lap(
             hold = (s > c.end_m) & (s <= c.end_m + driver.throttle_delay_m[c.index])
             v_exit = float(v_lim[on].min()) if on.any() else car.v_max
             v_lim[hold] = np.minimum(v_lim[hold], v_exit)
+        if c.index in driver.brake_early_m:
+            # Reach the corner speed N m before turn-in, then hold it: same braking, earlier.
+            early = (s >= c.start_m - driver.brake_early_m[c.index]) & (s < c.start_m)
+            v_corner = float(v_lim[on].min()) if on.any() else car.v_max
+            v_lim[early] = np.minimum(v_lim[early], v_corner)
 
     # Two laps back to back make the start speed periodic.
     lim2 = np.concatenate([v_lim, v_lim])
@@ -269,4 +281,22 @@ def simulate_lap(
     hi = np.asarray((*GEAR_UP_SPEEDS[1:], car.v_max + 1.0))[gear - 1]
     rpm = 4500.0 + (11_800.0 - 4500.0) * np.clip((speed - lo) / (hi - lo), 0, 1)
     steer = np.clip(-k / 0.045, -1.0, 1.0)  # left turns steer left (negative)
-    return LapProfile(track, speed, time, throttle, brake, gear, rpm, steer, lap_time)
+
+    slip_front = np.zeros(n)
+    slip_rear = np.zeros(n)
+    for c in track.corners:
+        if c.index in driver.lockup_m:
+            zone = np.flatnonzero((s >= c.start_m - 600.0) & (s <= c.end_m) & (brake > 0))
+            if len(zone):
+                last = s[zone[-1]]
+                lock = (s > last - driver.lockup_m[c.index]) & (s <= last)
+                slip_front[lock] = -0.5
+        if c.index in driver.wheelspin_m:
+            after = np.flatnonzero((s > c.start_m) & (throttle >= 0.98))
+            if len(after):
+                first = s[after[0]]
+                spin = (s >= first) & (s < first + driver.wheelspin_m[c.index])
+                slip_rear[spin] = 0.35
+    return LapProfile(
+        track, speed, time, throttle, brake, gear, rpm, steer, lap_time, slip_front, slip_rear
+    )

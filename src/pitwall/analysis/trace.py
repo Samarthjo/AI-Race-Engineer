@@ -31,6 +31,12 @@ CHANNELS: tuple[tuple[str, str, str], ...] = (
     ("drs", "drs", "step"),  # 0 / 1
     ("x", "world_position_x", "linear"),  # metres, game world
     ("z", "world_position_z", "linear"),
+    # Motion Ex wheel slip ratio: negative = wheel slower than the car (locking under brakes),
+    # positive = wheel faster (spinning under power).
+    ("slip_rl", "wheel_slip_ratio_rl", "linear"),
+    ("slip_rr", "wheel_slip_ratio_rr", "linear"),
+    ("slip_fl", "wheel_slip_ratio_fl", "linear"),
+    ("slip_fr", "wheel_slip_ratio_fr", "linear"),
 )
 TRACE_COLUMNS = ["lap_index", "lap_distance", "current_lap_time_in_ms"] + [
     c for _, c, _ in CHANNELS
@@ -67,6 +73,9 @@ class LapTrace:
 
 
 def _col(table: pa.Table, name: str) -> np.ndarray:
+    """Column as float64 (nulls -> NaN); a missing optional channel is all NaN."""
+    if name not in table.column_names:
+        return np.full(table.num_rows, np.nan)
     return np.asarray(table.column(name).to_numpy(zero_copy_only=False), dtype=np.float64)
 
 
@@ -160,8 +169,10 @@ def check_comparable(lap: dict[str, Any]) -> None:
 
 
 def read_lap_frames(frames_path: Path, lap_index: int, columns: list[str]) -> pa.Table:
-    table = pq.read_table(frames_path, columns=columns, filters=[("lap_index", "=", lap_index)])
-    return table
+    """One lap's rows; columns the file does not have (e.g. no Motion Ex data) are skipped."""
+    available = set(pq.read_schema(frames_path).names)
+    cols = [c for c in columns if c in available]
+    return pq.read_table(frames_path, columns=cols, filters=[("lap_index", "=", lap_index)])
 
 
 def load_trace(

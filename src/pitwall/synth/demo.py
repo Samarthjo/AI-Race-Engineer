@@ -3,20 +3,21 @@
 Always marked ``synthetic`` (manifest, database, UI); it never counts as one of your laps
 and never mixes with real laps in personal bests.
 
-Each lap makes one deliberate mistake on the synthetic track, in a known place:
+Each lap makes deliberate mistakes on the synthetic track, in known places:
 
-====  =====================================================  ==========
-lap   driving                                                loses in
-====  =====================================================  ==========
+====  ==========================================================  ==========
+lap   driving                                                     loses in
+====  ==========================================================  ==========
 1     out-lap
-2     brakes earlier and softer into T1                      sector 1
-3     slower through T2                                      sector 2
-4     slower through T6                                      sector 3
-5     late on the throttle out of T4, early braking at T1    sectors 1-2
+2     brakes 15 m early into T1 (same brake pressure)             sector 1
+3     slower through T2 (4 % lower corner speed)                  sector 2
+4     slower through T6, rear wheelspin on the exit               sector 3
+5     late to full throttle out of T4, softer braking into T1,    sectors 1-2
+      front lock-up into T3
 6     cuts the track: fastest, but invalid
 7     flashback mid-lap
 8     quits mid-lap (incomplete)
-====  =====================================================  ==========
+====  ==========================================================  ==========
 """
 
 from __future__ import annotations
@@ -36,10 +37,14 @@ def demo_plans() -> list[LapPlan]:
     base = DriverProfile()
     return [
         LapPlan(kind="out", driver=base),
-        LapPlan(driver=DriverProfile(brake_scale={0: 0.85})),
+        LapPlan(driver=DriverProfile(brake_early_m={0: 15.0})),
         LapPlan(driver=DriverProfile(corner_speed_scale={1: 0.96})),
-        LapPlan(driver=DriverProfile(corner_speed_scale={5: 0.95})),
-        LapPlan(driver=DriverProfile(throttle_delay_m={3: 30.0}, brake_scale={0: 0.9})),
+        LapPlan(driver=DriverProfile(corner_speed_scale={5: 0.95}, wheelspin_m={5: 12.0})),
+        LapPlan(
+            driver=DriverProfile(
+                throttle_delay_m={3: 30.0}, brake_scale={0: 0.9}, lockup_m={2: 6.0}
+            )
+        ),
         LapPlan(driver=base, invalid_from=0.62),
         LapPlan(driver=DriverProfile(brake_scale={0: 0.95}), flashback_at=0.45),
     ]

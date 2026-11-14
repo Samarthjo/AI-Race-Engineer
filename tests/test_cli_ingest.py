@@ -78,3 +78,26 @@ def test_demo_and_compare(tmp_path: Path):
         app, ["compare", "latest", "--lap", "4", "--ref", "lap", "--ref-lap", "2", *args]
     )
     assert res.exit_code == 0, res.output
+
+
+def test_corners_and_track_commands(tmp_path: Path):
+    args = ["--data-dir", str(tmp_path / "d")]
+    assert runner.invoke(app, ["demo", *args]).exit_code == 0
+    res = runner.invoke(app, ["track", "list", *args])
+    assert "No track models yet" in res.output
+    res = runner.invoke(app, ["corners", "latest", "--lap", "4", *args])
+    assert res.exit_code == 0, res.output
+    assert "Corners (lap / reference)" in res.output and "Findings" in res.output
+    assert "Later on the throttle" in res.output
+    res = runner.invoke(app, ["track", "list", *args])
+    assert "synthetic-track" in res.output and "draft" in res.output
+    res = runner.invoke(app, ["track", "show", "latest", *args])
+    assert res.exit_code == 0 and "c1" in res.output
+    res = runner.invoke(app, ["track", "rename", "latest", "c1", "Hairpin", *args])
+    assert res.exit_code == 0, res.output
+    res = runner.invoke(app, ["track", "draft", "latest", *args])
+    assert res.exit_code == 1 and "--force" in res.output
+    res = runner.invoke(app, ["track", "draft", "latest", "--force", *args])
+    assert res.exit_code == 0, res.output
+    res = runner.invoke(app, ["track", "confirm", "latest", *args])
+    assert res.exit_code == 0 and "confirmed" in res.output

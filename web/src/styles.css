@@ -521,3 +521,142 @@ table.data tr:last-child td {
   color: var(--muted);
   margin-top: 8px;
 }
+
+/* ------------------------------------------------------------ stage 3 */
+
+.main-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.banner.info {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface);
+  color: var(--ink-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--series-lap);
+}
+
+.btn {
+  background: var(--series-lap);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+table.corners tr.corner-row,
+table.corners tr.straight-row {
+  cursor: pointer;
+}
+
+table.corners tr.straight-row td {
+  color: var(--muted);
+}
+
+table.corners tr:hover td {
+  background: var(--surface-2);
+}
+
+table.corners tr.selected td,
+.findings li.selected {
+  background: var(--surface-2);
+}
+
+table.corners td,
+table.corners th {
+  white-space: nowrap;
+}
+
+.findings {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.findings li {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.finding-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.corner-tag {
+  font-size: 12px;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.badge {
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  color: var(--ink-2);
+  margin-left: auto;
+}
+
+.badge.high {
+  border-color: var(--ink-2);
+  color: var(--ink);
+}
+
+.finding-impact {
+  font-size: 13px;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.finding-detail {
+  margin-top: 4px;
+}
+
+.finding-try {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.try-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--series-lap);
+  margin-right: 4px;
+}
+
+@media (max-width: 760px) {
+  .banner.info {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

@@ -16,7 +16,9 @@ at the bottom.
 | Compare any lap with your session best, personal best or theoretical best | ✅ Stage 2 |
 | Web app: Lap Analysis page (synchronised graphs, track map, metrics) | ✅ Stage 2 |
 | Synthetic demo data, to explore the app without the PS5 | ✅ Stage 2 |
-| Corner-by-corner analysis | Stage 3 |
+| Corner-by-corner analysis: corners detected from your laps, time lost per corner and phase | ✅ Stage 3 |
+| Findings: measured driving differences per corner, with suggestions | ✅ Stage 3 |
+| Consistency per corner and your ideal lap (best segments) | ✅ Stage 3 |
 | Comparison with real F1 drivers (FastF1) | Stage 4 |
 | Race engineer reports | Stage 5 |
 | Live telemetry screen | Stage 6 |
@@ -197,11 +199,12 @@ You can run `serve` and `capture run` at the same time, in two Terminal windows.
 uv run pitwall demo
 ```
 
-This creates a **synthetic** session on a made-up test track, where each lap makes one
-deliberate mistake (late braking into T1, slow through T2 or T6, late on the throttle out of
-T4, an invalid lap, a flashback lap). It is labelled "synthetic" everywhere: in `pitwall
-sessions`, in the app (yellow banner), and it never counts towards your personal bests. It is
-useful to learn the screens before you have real laps.
+This creates a **synthetic** session on a made-up test track. Each lap makes deliberate
+mistakes in known places: braking 15 m early into T1, slower through T2 or T6, late to full
+throttle out of T4, softer braking, a front lock-up, rear wheelspin, an invalid lap and a
+flashback lap. It is labelled "synthetic" everywhere: in `pitwall sessions`, in the app
+(yellow banner), and it never counts towards your personal bests. It is useful to learn the
+screens, and to see every type of finding, before you have real laps.
 
 ---
 
@@ -290,6 +293,65 @@ How accurate is it? Both laps come from your own 60 Hz telemetry and the same ga
 Lap and sector times are the game's official values. Between frames (about 1.5 m apart at
 330 km/h) values are interpolated, so a delta at a point is accurate to a few milliseconds.
 
+**Findings** (top of the right column): what the lap does differently from the reference,
+corner by corner, biggest time cost first. Each finding shows:
+- the corner and what was measured (e.g. "Full throttle comes 30 m later (3120 m vs 3090 m
+  into the lap)");
+- the time it costs, and in which phases (approach, braking, mid-corner, exit, or "carried"
+  down the next straight). "Event" means it was measured but cost no measurable time
+  (lock-ups, wheelspin);
+- a confidence badge: **high** when the difference is well above the measurement
+  resolution and costs at least 0.05 s, otherwise **medium**;
+- a **Try** suggestion: an incremental target (half the gap first), never a jump straight to
+  the reference.
+
+Click "show on charts" to zoom in. Findings of the same corner can overlap (e.g. a lower
+minimum speed and a later throttle), so don't add their times up; the corner table shows each
+corner's total.
+
+The findings that exist so far:
+
+| Finding | Measured as |
+|---|---|
+| Brakes earlier | Brake point (brake ≥ 10 % for 3 m) at least 6 m earlier, with similar pressure |
+| Softer initial braking | Peak brake at least 10 percentage points lower; replaces "brakes earlier" when that is the cause |
+| Brakes later but loses the apex | Brake point at least 6 m later, but minimum speed at least 3 km/h lower or the apex 10 m later |
+| Lower minimum speed | Minimum speed at least 3 km/h lower |
+| Later on the throttle | Throttle ≥ 20 %, or full throttle, at least 8 m later |
+| Throttle hesitation | Throttle drops by 30 % or more after it was picked up |
+| Coasting | At least 10 m more distance with neither pedal, 15 m or more in total |
+| Slower exit | Exit speed at least 4 km/h lower, costing time on the next straight (only when no throttle or apex finding explains it) |
+| Front lock-up / rear wheelspin | Wheel slip ratio beyond ±0.20 (from the game's wheel data) for 3 m or more |
+
+A finding needs at least 0.02 s of time cost in its phase (except lock-ups and wheelspin), so
+tiny differences never produce advice.
+
+**Corner by corner** (below the charts): one row per corner and straight, in lap order:
+- **Time Δ**: time lost (+) or gained (−) there. A corner includes its **exit carry**, the
+  time lost on the following straight because the exit was slower.
+- **Brake point**: earlier or later than the reference, in metres.
+- **Entry, Min and Exit km/h**: this lap / reference.
+- **Full throttle**: earlier or later than the reference, in metres.
+- **Spread**: how much this segment's time varies over the session's usable laps (standard
+  deviation). Red = more than ±0.1 s, i.e. inconsistent.
+
+The rows add up exactly to the lap delta. Below the table: your **ideal lap**, the sum of
+your best time in every segment this session. Click a row to zoom the charts and highlight
+the corner on the map.
+
+**Corners and the track model:** the first time you analyse a track, Pitwall detects its
+corners automatically from your fastest usable lap there:
+- braking or lifting zones become corners (chicanes are merged into one "complex");
+- corners you take flat out are found from the shape of the line;
+- everything in between becomes straights.
+
+This is a **draft**: a banner asks you to check the labels on the map (C1, C2, ...) and the
+corner table. When they look right, click **Confirm corners**, or run
+`uv run pitwall track confirm latest`. From then on, every lap on that track is cut into
+exactly the same pieces. At Monza, the corners get their real names (e.g. "Variante del
+Rettifilo (T1-T2)") if the detected braking corners match Monza's six. See
+[3.5](#35-track-models) to rename corners or fix their boundaries.
+
 ### 3.3 Comparing in the terminal
 
 ```bash
@@ -300,6 +362,33 @@ This prints the same comparison as text: lap vs reference, sector deltas, the bi
 200 m losses and gains, and the lap metrics side by side. `--ref` takes `session_best`
 (default), `personal_best`, `theoretical_best` or `lap` (with `--ref-lap <#>`, and
 optionally `--ref-session <session>`).
+
+### 3.4 Corners in the terminal
+
+```bash
+uv run pitwall corners latest --lap 4
+```
+
+This prints the corner table (time lost per corner including exit carry, brake point, entry,
+minimum and exit speed, full-throttle point) and the findings with their suggestions. It
+takes the same `--ref` options as `compare`.
+
+### 3.5 Track models
+
+Track models are saved in `~/PitwallData/tracks/<key>.json`, for example
+`track11-monza.json`.
+
+| Command | What it does |
+|---|---|
+| `uv run pitwall track list` | All saved models: status (draft / confirmed), version, number of corners |
+| `uv run pitwall track show latest` | The segments of the model used by the latest session (or give a key) |
+| `uv run pitwall track rename latest c3 "Lesmo 1"` | Rename a corner (or straight, e.g. `s2`) |
+| `uv run pitwall track draft latest --lap 7 --force` | Re-detect the corners from a specific lap (e.g. your cleanest one) |
+| `uv run pitwall track confirm latest` | Mark the model as checked |
+
+You can also edit the JSON file directly, e.g. to move a boundary (`start_m` / `end_m`, in
+metres from the line). Segments must cover the whole lap without gaps, and `pitwall track
+show` reports any problem. Each change increases the model's version.
 
 ---
 
@@ -321,6 +410,8 @@ optionally `--ref-session <session>`).
 | `pitwall serve [--open] [--port 8000]` | Starts the web app (Lap Analysis) at http://127.0.0.1:8000; `--live-port` (default 20778) for the live status, `--no-live` to switch it off |
 | `pitwall compare <session\|latest> --lap # [--ref …]` | Compares a lap with a reference in the terminal |
 | `pitwall demo` | Creates a labelled synthetic demo session |
+| `pitwall corners <session\|latest> --lap # [--ref …]` | Corner table and findings in the terminal |
+| `pitwall track list \| show \| draft \| confirm \| rename` | Manage track models (corners); see [3.5](#35-track-models) |
 | `pitwall version` | Version |
 
 All commands accept `--data-dir` (or the environment variable `PITWALL_DATA_DIR`) to use a
@@ -372,6 +463,9 @@ Everything stays on the Mac, by default in `~/PitwallData`:
 | `pitwall serve` says the web UI is not built | You are on a development copy; see `web/README.md` |
 | Port 8000 already in use | `uv run pitwall serve --port 8010` and open that address |
 | Live pill always says "No live data" | `pitwall capture run` must be running (it forwards packets to UDP 20778) and the game must be sending |
+| Corners look wrong (merged, missing or split) | Re-draft from a cleaner lap: `uv run pitwall track draft latest --lap <#> --force`, or edit the JSON file (see 3.5) |
+| `Corner analysis unavailable: track model … is N m but this session's track is M m` | The game's track length changed (e.g. after a game update). Re-draft with the command shown in the message |
+| "No findings" | The lap matches the reference corner by corner within the thresholds, or the differences are too small to be measured reliably |
 
 ---
 
@@ -456,4 +550,48 @@ line equals the lap-time difference exactly.
   compared with an official track map.
 - Personal best requires the same game track ID and car class (formula); laps from different
   game versions are not separated yet.
+
+### Stage 3: corner-by-corner analysis and findings (2026-11-14)
+
+**New**
+- Track models: corners are detected automatically from your fastest usable lap on a track
+  (braking/lifting zones, chicanes merged, flat-out corners from the line's curvature,
+  straights in between), saved as a draft you confirm in the app or with
+  `pitwall track confirm`. `pitwall track list | show | draft | confirm | rename`.
+- Per-corner metrics, each with a written definition: brake point, braking distance, entry
+  speed, peak brake and how quickly it is reached and released, trail braking, minimum speed
+  and where it is, gear at the apex, throttle pickup, full-throttle point, throttle
+  hesitation, coasting, exit speed, lock-up and wheelspin distance.
+- Time accounting: the lap delta is split exactly over corners and straights; each corner
+  into approach, braking, mid-corner and exit; and the time a slower exit costs on the next
+  straight is credited to that corner ("exit carry").
+- Findings with root causes: e.g. softer braking (instead of "brakes earlier") or "slower
+  exit" only when nothing else explains it. Each has measured values, time impact,
+  confidence and an incremental suggestion.
+- Consistency: spread of every corner over the session's usable laps, and your ideal lap from
+  your best segments.
+- App: Findings card, Corner by corner table (click to zoom and highlight), corner labels on
+  the map, and the draft banner with **Confirm corners**. Terminal: `pitwall corners`.
+- The demo session now contains braking early, slower corners, late throttle, softer
+  braking, a lock-up and wheelspin, so every finding type can be explored.
+
+**Checked against synthetic laps with known mistakes**
+- Segments add up exactly to the lap delta; phases add up exactly to each corner's loss.
+- Brake points are within 3 m of the true value; minimum speeds within 1.5 km/h.
+- Braking 15 m early gives exactly one "brakes earlier" of about 15 m at that corner.
+- Late throttle, a slower corner, softer braking, a lock-up and wheelspin each give exactly
+  the expected finding, at the right corner.
+- Identical and near-identical laps give no findings at all.
+
+**Limitations**
+- Verified on synthetic laps only. Thresholds (especially wheel slip for lock-ups and
+  wheelspin) will be tuned on your real recordings. The Stage 3 gate is your review of the
+  findings on your golden laps.
+- Corner detection depends on the lap it is drafted from: draft from a clean, fast lap.
+  Official F1 corner numbers arrive with the FastF1 track alignment in Stage 4; until then,
+  only Monza gets suggested names.
+- Corner analysis is computed when you open a lap; it is not stored yet (history arrives in
+  Stage 7).
+- Against the theoretical best (stitched from several laps), corner metrics near a sector
+  line mix two laps; prefer the session best for corner findings.
 

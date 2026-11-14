@@ -1,5 +1,5 @@
 import { useMemo, useRef } from "react";
-import type { Comparison } from "../api";
+import type { Comparison, SegmentDef } from "../api";
 
 /** Track map from the lap's own world positions, coloured by where time is gained or lost
  *  against the reference (smoothed delta slope, seconds per 100 m). Diverging scale:
@@ -27,9 +27,18 @@ type Props = {
   data: Comparison;
   hoverIndex: number | null;
   onHover: (i: number | null) => void;
+  segments?: SegmentDef[];
+  selected?: string | null;
 };
 
-export function TrackMap({ data, hoverIndex, onHover }: Props) {
+/** Short map label: "T1-T2" from "Variante del Rettifilo (T1-T2)", else "C3". */
+export function shortLabel(seg: SegmentDef): string {
+  const m = seg.name.match(/\(([^)]*T\d[^)]*)\)/);
+  if (m) return m[1];
+  return seg.name.length <= 4 ? seg.name : seg.id.toUpperCase();
+}
+
+export function TrackMap({ data, hoverIndex, onHover, segments = [], selected = null }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const frame = useRef<number | null>(null);
   const { x, z, loss_rate: rate, distance } = data.trace;
@@ -69,16 +78,38 @@ export function TrackMap({ data, hoverIndex, onHover }: Props) {
       for (const p of pts) if (Math.abs(distance[p.i] - m) < Math.abs(distance[best.i] - m)) best = p;
       return { label: `S${k + 2}`, p: best };
     });
+    const nearest = (m: number) => {
+      let best = pts[0];
+      for (const p of pts) if (Math.abs(distance[p.i] - m) < Math.abs(distance[best.i] - m)) best = p;
+      return best;
+    };
     return {
       pts,
       index,
       segments,
       sectorMarks,
+      nearest,
       viewBox: `${minX - pad} ${minY - pad} ${maxX - minX + 2 * pad} ${maxY - minY + 2 * pad}`,
       stroke: span * 0.014,
       font: span * 0.035,
     };
   }, [x, z, rate, distance, data.session.sector_starts_m]);
+
+  const corners = useMemo(() => {
+    if (!geo) return [];
+    return segments
+      .filter((s) => s.kind !== "straight")
+      .map((s) => ({ seg: s, p: geo.nearest(s.apexes_m[0] ?? (s.start_m + s.end_m) / 2) }));
+  }, [geo, segments]);
+
+  const highlight = useMemo(() => {
+    if (!geo || !selected) return null;
+    const seg = segments.find((s) => s.id === selected);
+    if (!seg) return null;
+    const pts = geo.pts.filter((p) => distance[p.i] >= seg.start_m && distance[p.i] <= seg.end_m);
+    if (pts.length < 2) return null;
+    return pts.map((p, k) => `${k ? "L" : "M"}${p.px.toFixed(1)} ${p.py.toFixed(1)}`).join(" ");
+  }, [geo, segments, selected, distance]);
 
   if (!geo) return <p className="muted">No position data for this lap.</p>;
 
@@ -115,6 +146,16 @@ export function TrackMap({ data, hoverIndex, onHover }: Props) {
         onPointerMove={onMove}
         onPointerLeave={() => onHover(null)}
       >
+        {highlight && (
+          <path
+            d={highlight}
+            fill="none"
+            style={{ stroke: "var(--ink)", opacity: 0.35 }}
+            strokeWidth={geo.stroke * 2.6}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        )}
         {geo.segments.map((s, k) => (
           <path
             key={k}
@@ -137,6 +178,19 @@ export function TrackMap({ data, hoverIndex, onHover }: Props) {
               {m.label}
             </text>
           </g>
+        ))}
+        {corners.map(({ seg, p }) => (
+          <text
+            key={seg.id}
+            x={p.px}
+            y={p.py - geo.stroke * 1.8}
+            fontSize={geo.font * (seg.id === selected ? 1.05 : 0.85)}
+            fontWeight={seg.id === selected ? 700 : 500}
+            textAnchor="middle"
+            style={{ fill: seg.id === selected ? "var(--ink)" : "var(--ink-2)" }}
+          >
+            {shortLabel(seg)}
+          </text>
         ))}
         {hover && (
           <circle
