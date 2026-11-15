@@ -814,3 +814,219 @@ ul.plain {
 .answer .q {
   font-weight: 600;
 }
+
+/* ------------------------------------------------------------------ live */
+
+.live-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin-bottom: 12px;
+}
+
+.live-bar .spacer {
+  flex: 1;
+}
+
+.inline-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.inline-field select {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  max-width: 320px;
+}
+
+.live-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.live-main,
+.live-side {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+@media (max-width: 1000px) {
+  .live-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.live-delta .label,
+.readouts .label,
+.tyre .label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.delta-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.delta-value {
+  font-size: 56px;
+  font-weight: 700;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+
+.delta-stats {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+}
+
+.big {
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.huge {
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.sector-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.sector-tile {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sector-tile.now {
+  border-color: var(--ink-2);
+}
+
+.inputs {
+  display: flex;
+  gap: 18px;
+  align-items: stretch;
+}
+
+.vbar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 64px;
+}
+
+.vbar-track {
+  width: 28px;
+  height: 150px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  position: relative;
+  overflow: hidden;
+}
+
+.vbar-fill {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--ink-2);
+}
+
+.readouts {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 18px;
+  min-width: 0;
+}
+
+.readouts .wide {
+  grid-column: 1 / -1;
+}
+
+.hbar {
+  height: 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-2);
+  overflow: hidden;
+  margin: 4px 0 8px;
+}
+
+.hbar-fill {
+  height: 100%;
+  background: var(--ink-2);
+}
+
+.steer {
+  position: relative;
+  height: 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: linear-gradient(to right, transparent calc(50% - 1px), var(--axis) calc(50% - 1px), var(--axis) calc(50% + 1px), transparent calc(50% + 1px));
+}
+
+.steer-mark {
+  position: absolute;
+  top: -3px;
+  width: 4px;
+  height: 14px;
+  margin-left: -2px;
+  border-radius: 2px;
+  background: var(--ink);
+}
+
+.tyres {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tyre {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.report-row td {
+  background: var(--surface-2);
+}
+
+@media (max-width: 560px) {
+  .inputs {
+    flex-wrap: wrap;
+  }
+
+  .delta-value {
+    font-size: 44px;
+  }
+}

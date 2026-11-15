@@ -23,7 +23,7 @@ at the bottom.
 | Driver Benchmark: your lap against a real F1 lap, measured and physics-normalised, with uncertainty | ✅ Stage 4 |
 | Engineer's report: focus for the next lap, where the time goes, strengths, notes (measured, no AI) | ✅ Stage 5 |
 | AI write-up and questions with a local model (Ollama); every number checked against the measurements | ✅ Stage 5 |
-| Live telemetry screen | Stage 6 |
+| Live telemetry: inputs, tyres, fuel, ERS, live delta to your best or a real F1 lap, a quick report after every lap | ✅ Stage 6 |
 | Long-term progress tracking | Stage 7 |
 
 ---
@@ -226,9 +226,14 @@ uv run pitwall serve --open
 This starts the Pitwall web app on this Mac and opens http://127.0.0.1:8000. It only runs
 locally and reads your data folder. Stop it with Ctrl+C. The **Lap Analysis** page is
 explained in [3.2](#32-the-lap-analysis-page). While `pitwall capture run` is recording, the
-pill at the top right shows basic live status (track, lap, lap time, speed).
+pill at the top right shows the live status (track, lap, lap time, speed).
 
 You can run `serve` and `capture run` at the same time, in two Terminal windows.
+
+**While you drive**, keep **Live Telemetry** open (on the Mac, or on a tablet or phone on the
+same network, see [3.11](#311-the-live-telemetry-page)): the live delta to your best lap, your
+inputs, tyres, fuel and energy, and a quick report a few seconds after each lap. Run `capture
+run` first, then `serve`: the capture forwards a copy of every packet to the app.
 
 ### Step 8: benchmark against a real F1 driver
 
@@ -644,6 +649,56 @@ uv run pitwall engineer eval --model qwen3:8b
 
 Keep the model with no unsupported claims and the best ratings in `[engineer] model`.
 
+### 3.11 The Live Telemetry page
+
+It follows the car while you drive, up to 25 times a second, from the copy of the packets
+that `pitwall capture run` forwards (UDP 20778). Recording is not affected: the capture keeps
+writing everything to disk, whatever the page does.
+
+**Top bar.** Whether telemetry is arriving, the track and session, packets per second, the
+share of packets lost on the network, and how far behind the car the page is (from the packet
+arriving on the Mac to the screen; typically a few milliseconds). **Delta against** chooses the
+reference:
+
+- **Automatic** (default): your personal best on this track (from the recordings you have
+  ingested), or, if there is none, the best clean lap of this session so far;
+- **Personal best** or **Best lap of this live session**;
+- **Real F1**: a stored real lap of this event (see [3.6](#36-the-driver-benchmark-page)),
+  placed on your track along your best lap. Its delta is an estimate.
+
+**Delta.** Big number: your time minus the reference's time at the same point of the lap,
+with "ahead" or "behind". It starts when you cross the line, so out laps have none. Next to
+it: the running lap time, the predicted lap time (reference lap time plus the current delta)
+and the reference's lap time. Below: the delta of each sector of this lap, when you leave it.
+At the line, the lap's delta is computed from the official lap time, exactly as on Lap
+Analysis.
+
+**Car.** Throttle and brake (0–100 %), speed, gear, DRS, engine rpm, steering. **On track**:
+the car on the map (the map comes from your reference lap, or a clean lap of this session).
+**Tyres, fuel, energy**: surface and inner temperatures, pressures and wear per tyre, compound
+and age, fuel and the game's estimate of laps it lasts, ERS store.
+
+**Laps this session.** Each completed lap with its time, delta, sector deltas and status:
+*clean*, or why not (out lap, invalid, flashback, packet loss). A few seconds after every clean
+lap, a **quick report**: the engineer's measured report against your personal best (or the
+best other lap of the session): the headline and up to three things to try next lap. Click
+it to open. Laps are compared with your own laps only: the comparison with real F1 laps is
+on Driver Benchmark.
+
+Everything on this page is provisional. `pitwall ingest` rebuilds every lap from the
+recording afterwards; Lap Analysis and Race Engineer show the full analysis.
+
+**Flashbacks** are followed: the part of the lap that the flashback erased is dropped, the
+lap is marked "flashback used" and is not a clean lap.
+
+**On a tablet or phone.** Start the app for the whole network with
+`uv run pitwall serve --host 0.0.0.0` and open `http://<the Mac's address>:8000` (the address
+from `pitwall doctor`). Anyone on your network can then open the app, so do this only on your
+home network.
+
+**Without the PS5.** **Play demo** replays the synthetic demo session into the page at real
+speed (marked synthetic everywhere; compared only with synthetic laps). **Stop demo** ends it.
+
 ---
 
 ## 4. Command reference
@@ -661,7 +716,7 @@ Keep the model with no unsupported claims and the best ratings in `[engineer] mo
 | `pitwall laps <session\|latest>` | Lap table for one session |
 | `pitwall export <session\|latest> [--lap #] [--out file.csv\|.parquet]` | Exports per-frame telemetry |
 | `pitwall decode <id> [--packet CAR_TELEMETRY] [--limit 1] [--skip N] [--all-cars]` | Prints decoded packets as JSON, to compare values with what the game shows |
-| `pitwall serve [--open] [--port 8000]` | Starts the web app (Lap Analysis) at http://127.0.0.1:8000; `--live-port` (default 20778) for the live status, `--no-live` to switch it off |
+| `pitwall serve [--open] [--port 8000]` | Starts the web app at http://127.0.0.1:8000; `--live-port` (default 20778) for live telemetry, `--no-live` to switch it off, `--host 0.0.0.0` to open it from a tablet or phone on your network |
 | `pitwall compare <session\|latest> --lap # [--ref …]` | Compares a lap with a reference in the terminal |
 | `pitwall demo` | Creates a labelled synthetic demo session |
 | `pitwall corners <session\|latest> --lap # [--ref …]` | Corner table and findings in the terminal |
@@ -732,6 +787,10 @@ Everything stays on the Mac, by default in `~/PitwallData`:
 | `pitwall serve` says the web UI is not built | You are on a development copy; see `web/README.md` |
 | Port 8000 already in use | `uv run pitwall serve --port 8010` and open that address |
 | Live pill always says "No live data" | `pitwall capture run` must be running (it forwards packets to UDP 20778) and the game must be sending |
+| Live Telemetry shows no delta | It starts at the line (not on out laps). The page says why when there is no reference: no ingested lap on this track and no clean lap in this session yet. Ingest earlier recordings (`pitwall ingest`) to use your personal best |
+| Live Telemetry: "real F1 lap needs one of your laps on this track" | A real F1 reference is placed on your track along one of your laps: ingest a recording of this track, or drive a clean lap first |
+| Live Telemetry shows packet loss above 0 % | The network drops packets: use wired Ethernet for the PS5 and the Mac. Laps with more than 2 % loss are not clean laps |
+| Live Telemetry is "Connecting…" forever | The page cannot reach the app: is `pitwall serve` still running? It reconnects by itself |
 | Corners look wrong (merged, missing or split) | Re-draft from a cleaner lap: `uv run pitwall track draft latest --lap <#> --force`, or edit the JSON file (see 3.5) |
 | `Corner analysis unavailable: track model … is N m but this session's track is M m` | The game's track length changed (e.g. after a game update). Re-draft with the command shown in the message |
 | "No findings" | The lap matches the reference corner by corner within the thresholds, or the differences are too small to be measured reliably |
@@ -988,3 +1047,45 @@ line equals the lap-time difference exactly.
 - No history yet: questions about progress over sessions are refused until Stage 7.
 - The write-up waits for the whole answer (no streaming); the first request after starting
   Ollama is slow while the model loads.
+
+### Stage 6: live telemetry (2026-11-15)
+
+**New**
+- **Live Telemetry** page, updated up to 25 times a second over a WebSocket from the copy of
+  the packets that `pitwall capture run` forwards: inputs, speed, gear, rpm, DRS, steering,
+  tyre temperatures, pressures and wear, compound and age, fuel, ERS, the car on the map,
+  packets per second, packet loss and how far behind the car the page is.
+- **Live delta** to your personal best (ingested laps), the best lap of the session so far, or
+  a stored real F1 lap placed on your track (an estimate): delta, predicted lap time and sector
+  deltas. At the line the delta comes from the official lap time.
+- **Laps of the live session** with their status (clean, or why not: out lap, invalid,
+  flashback, packet loss) and a **quick report** a few seconds after each clean lap: the
+  engineer's measured report against your personal best or the session's best other lap.
+- Flashbacks are followed live as in the ingest: the erased part of the lap is dropped and the
+  lap is marked.
+- **Play demo** replays the synthetic demo session into the page (marked synthetic).
+- `pitwall serve` now serves live telemetry; `--host 0.0.0.0` opens the app to a tablet or
+  phone on your network. New dependency: `websockets` (installed by `uv sync`).
+
+**Checked against replayed synthetic sessions**
+- Lap times, sector times and clean / not clean match what `pitwall ingest` builds from the
+  same recording; the out lap and a flashback lap are recognised.
+- The live delta at the line equals the post-lap delta exactly, and along the lap it stays
+  within 1.5 ms of the post-lap delta (including the lap with a flashback); sector deltas add
+  up to the lap delta.
+- The quick report names the same things to try as the full report built after ingest
+  (braking early, late throttle).
+- Losing every 10th Lap Data packet shows as 10 % packet loss and makes the lap not clean.
+- From a UDP packet arriving to the WebSocket message: under 100 ms on this machine (the
+  plan's target; measured here at well under that).
+- The demo replay is marked synthetic, and a real session after it starts afresh.
+
+**Limitations**
+- Not yet tried with the PS5: the latency over your network, and the behaviour with real
+  packet timing, will be checked on your first live session (see docs/unfinished.md).
+- Live results are provisional and not stored; `pitwall ingest` remains the source of truth.
+- The quick report compares with your own laps only; real F1 comparisons stay on Driver
+  Benchmark. Without a saved track model, its corners come from an unsaved draft.
+- The live delta needs the lap to start at the line; a lap joined mid-way has none.
+- Tyre, fuel and energy values are shown as the game sends them; the demo's synthetic car
+  does not simulate them.

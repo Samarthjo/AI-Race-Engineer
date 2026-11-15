@@ -6,16 +6,18 @@ Everything runs on this machine and reads the local data directory.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import sqlite3
+import time
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -29,7 +31,6 @@ from pitwall.analysis.corners import analyse_corners
 from pitwall.analysis.findings import lap_findings
 from pitwall.analysis.metrics import DEFINITIONS, load_lap_metrics
 from pitwall.analysis.trace import NotComparableError, check_comparable, load_trace
-from pitwall.api.live import LiveStatus
 from pitwall.config import EngineerConfig, ReferenceConfig
 from pitwall.engineer import store as narratives
 from pitwall.engineer.llm import LLMProvider, make_provider
@@ -38,6 +39,9 @@ from pitwall.engineer.qa import QA_PROMPT_VERSION
 from pitwall.engineer.report import render_text
 from pitwall.engineer.service import LapContext, ask_lap, build_context, narrate_lap
 from pitwall.ingest.pipeline import DB_NAME
+from pitwall.live import reference as live_refs
+from pitwall.live.demo import DemoReplay
+from pitwall.live.engine import LiveEngine
 from pitwall.reference.archive import Archive, FetchError
 from pitwall.reference.laps import ReferenceDataError, classification, parse_lap_rows
 from pitwall.reference.service import (
@@ -51,11 +55,13 @@ from pitwall.reference.service import (
 )
 from pitwall.reference.store import ref_lap_summary
 from pitwall.storage import db
-from pitwall.track.model import TrackModel, confirm_model, list_models
+from pitwall.track.model import TrackModel, confirm_model, list_models, load_model, track_key
 from pitwall.track.service import model_for_session
 
 STATIC_DIR = Path(__file__).parent / "static"
 TRACE_CHANNELS = ("speed", "throttle", "brake", "gear", "steer", "rpm")
+FEED_INTERVAL_S = 0.04  # live feed: up to 25 updates a second
+HEARTBEAT_S = 1.0
 CHANNEL_DECIMALS = {"speed": 1, "throttle": 3, "brake": 3, "gear": 0, "steer": 3, "rpm": 0}
 
 
@@ -272,7 +278,7 @@ class AskBody(BaseModel):
 
 def create_app(
     data_dir: Path,
-    live: LiveStatus | None = None,
+    live: LiveEngine | None = None,
     reference: ReferenceConfig | None = None,
     engineer: EngineerConfig | None = None,
     llm: LLMProvider | None = None,
@@ -620,6 +626,101 @@ def create_app(
         if live is None:
             return {"listening": False, "receiving": False, "error": "live status disabled"}
         return live.snapshot()
+
+    def need_live() -> LiveEngine:
+        if live is None:
+            raise HTTPException(409, "live telemetry is switched off (pitwall serve --no-live)")
+        return live
+
+    @app.websocket("/api/live/ws")
+    async def live_feed(ws: WebSocket) -> None:
+        """Live state at up to 25 updates a second, plus events (lap completed, report
+        ready, reference changed). Each message carries the server's send time (ms) and
+        the age of the newest packet, so the page can show how fresh it is."""
+        await ws.accept()
+        if live is None:
+            await ws.send_json({"type": "error", "error": "live telemetry is switched off"})
+            await ws.close()
+            return
+        last_seq, last_sent, last_event = -1, 0.0, live.last_event_id
+        try:
+            while True:
+                now = time.monotonic()
+                seq = live.seq
+                if seq != last_seq or now - last_sent >= HEARTBEAT_S:
+                    await ws.send_json(
+                        {"type": "state", "sent_ms": time.time() * 1000, "data": live.snapshot()}
+                    )
+                    last_seq, last_sent = seq, now
+                for ev in live.events_after(last_event):
+                    await ws.send_json({"type": "event", "sent_ms": time.time() * 1000, **ev})
+                    last_event = ev["id"]
+                await asyncio.sleep(FEED_INTERVAL_S)
+        except (WebSocketDisconnect, RuntimeError):
+            return
+
+    @app.get("/api/live/references")
+    def live_references() -> dict[str, Any]:
+        engine = need_live()
+        with database() as conn:
+            opts = live_refs.options(conn, engine.session)
+        return {
+            "options": opts,
+            "choice": engine.reference_choice,
+            "reference": None if engine.reference is None else engine.reference.summary(),
+            "note": engine.reference_note,
+        }
+
+    @app.post("/api/live/reference")
+    def live_reference(key: str) -> dict[str, Any]:
+        engine = need_live()
+        if key not in ("auto", "personal_best", "session_best") and not key.startswith("pro:"):
+            raise HTTPException(422, f"unknown reference {key!r}")
+        engine.choose_reference(key)
+        return {"choice": key}
+
+    @app.get("/api/live/track")
+    def live_track() -> dict[str, Any]:
+        """Your track's outline for the live map: the reference lap's path, else the best
+        lap of the session, with the corners of the saved track model."""
+        engine = need_live()
+        path = engine.track_path()
+        if path is None or engine.session is None:
+            return {"available": False}
+        s = engine.session
+        model = load_model(data_dir, track_key(s["track_id"], s["track_name"], s["synthetic"]))
+        take = np.arange(0, len(path.distance), 5)
+        return {
+            "available": True,
+            "track_length_m": path.track_length_m,
+            "distance": _arr(path.distance, 1, take),
+            "x": _arr(path.channels["x"], 2, take),
+            "z": _arr(path.channels["z"], 2, take),
+            "segments": model_payload(model)["segments"]
+            if model is not None and model.fits(s["track_length_m"])
+            else [],
+        }
+
+    demo: dict[str, DemoReplay] = {}
+
+    @app.post("/api/live/demo")
+    def live_demo(
+        action: str = "start", speed: float = Query(1.0, ge=0.5, le=20.0)
+    ) -> dict[str, Any]:
+        """Replay the synthetic demo session into the live engine (marked synthetic)."""
+        engine = need_live()
+        current = demo.get("replay")
+        if action == "stop":
+            if current is not None:
+                current.stop()
+            return {"running": False}
+        if action != "start":
+            raise HTTPException(422, "action must be start or stop")
+        if current is not None and current.running:
+            return {"running": True}
+        demo["replay"] = DemoReplay(engine, speed=speed)
+        demo["replay"].start()
+        return {"running": True}
 
     if (STATIC_DIR / "index.html").exists():
         app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="ui")

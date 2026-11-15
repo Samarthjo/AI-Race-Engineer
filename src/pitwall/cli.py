@@ -795,10 +795,10 @@ def serve(
     import uvicorn
 
     from pitwall.api.app import STATIC_DIR, create_app
-    from pitwall.api.live import LiveStatus
+    from pitwall.live.engine import LiveEngine
 
     cfg = _load(config, data_dir)
-    live = None if no_live else LiveStatus("127.0.0.1", live_port)
+    live = None if no_live else LiveEngine("127.0.0.1", live_port, data_dir=cfg.data_dir)
     application = create_app(cfg.data_dir, live, cfg.reference, cfg.engineer)
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}"
     console.print(f"[bold green]Pitwall[/] running at {url}  (Ctrl+C to stop)")
@@ -806,7 +806,8 @@ def serve(
         console.print("[yellow]Web UI not built; only the API is available (see web/README.md).[/]")
     if live is not None:
         console.print(
-            f"Live status listens on UDP {live_port} (the copy `pitwall capture run` forwards)."
+            f"Live telemetry listens on UDP {live_port} (the copy `pitwall capture run` "
+            "forwards); open Live Telemetry in the app."
         )
     if open_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()

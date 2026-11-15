@@ -4,12 +4,13 @@ import { Placeholder } from "./components/Placeholder";
 import { Benchmark } from "./pages/Benchmark";
 import { Engineer } from "./pages/Engineer";
 import { LapAnalysis } from "./pages/LapAnalysis";
+import { Live } from "./pages/Live";
 
 type PageKey = "dashboard" | "live" | "analysis" | "benchmark" | "engineer" | "history";
 
 const PAGES: { key: PageKey; label: string; stage?: number; blurb?: string }[] = [
   { key: "dashboard", label: "Dashboard", stage: 7, blurb: "Your driving statistics, recent sessions and progress over time." },
-  { key: "live", label: "Live Telemetry", stage: 6, blurb: "Inputs, tyres, fuel, ERS and a live delta while you drive." },
+  { key: "live", label: "Live Telemetry" },
   { key: "analysis", label: "Lap Analysis" },
   { key: "benchmark", label: "Driver Benchmark" },
   { key: "engineer", label: "Race Engineer" },
@@ -79,6 +80,8 @@ export function App() {
           <Benchmark theme={theme} />
         ) : page === "engineer" ? (
           <Engineer />
+        ) : page === "live" ? (
+          <Live />
         ) : (
           <Placeholder title={current.label} stage={current.stage!} blurb={current.blurb!} />
         )}

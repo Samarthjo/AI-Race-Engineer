@@ -416,18 +416,107 @@ export type EngineerStatus = {
   error: string | null;
 };
 
+export type Wheels = { rl: number; rr: number; fl: number; fr: number };
+
+export type LiveLapSummary = {
+  number: number;
+  lap_time_ms: number | null;
+  sectors_ms: (number | null)[];
+  valid: boolean;
+  kind: string;
+  usable: boolean;
+  issues: string[];
+  flashbacks: number;
+  loss_pct: number;
+  delta_s: number | null;
+  sector_deltas: (number | null)[];
+  reference: string | null;
+  report: {
+    status: "ready" | "skipped";
+    reason?: string;
+    provisional?: boolean;
+    reference?: string;
+    headline?: string;
+    delta_s?: number;
+    focus?: FocusItem[];
+    losses?: { segment_name: string; loss_s: number; causes: string[] }[];
+    notes?: string[];
+  } | null;
+};
+
+export type LiveRef = { key: string; kind: string; label: string; lap_time_ms: number; estimate: boolean };
+
 export type LiveStatus = {
+  seq?: number;
   listening: boolean;
   receiving: boolean;
   error?: string | null;
+  port?: number;
+  last_packet_age_s?: number | null;
   packets_per_s?: number;
+  loss_pct?: number;
+  decode_errors?: number;
+  session?: {
+    session_uid: string;
+    track_id: number;
+    track_name: string;
+    track_length_m: number;
+    session_type_name: string;
+    sector2_start_m: number;
+    sector3_start_m: number;
+    weather: string;
+    track_temp_c: number;
+    air_temp_c: number;
+    synthetic: boolean;
+  } | null;
   track_name?: string;
   session_type_name?: string;
+  reference?: LiveRef | null;
+  reference_choice?: string;
+  reference_note?: string | null;
+  current_lap?: { number: number; flashbacks: number; started_at_line: boolean } | null;
+  laps?: LiveLapSummary[];
   lap_number?: number;
   lap_distance_m?: number;
   current_lap_time_ms?: number;
+  last_lap_time_ms?: number | null;
+  sector?: number;
+  lap_invalid?: boolean;
+  delta_s?: number | null;
+  predicted_lap_ms?: number | null;
+  sector_deltas?: (number | null)[];
   speed_kmh?: number;
   gear?: number;
+  rpm?: number;
+  max_rpm?: number;
+  rev_lights_pct?: number;
+  throttle?: number;
+  brake?: number;
+  steer?: number;
+  drs?: boolean;
+  drs_allowed?: boolean;
+  x?: number;
+  z?: number;
+  tyre_surface_c?: Wheels;
+  tyre_inner_c?: Wheels;
+  tyre_pressure_psi?: Wheels;
+  tyre_wear_pct?: Wheels;
+  brake_temp_c?: Wheels;
+  tyre_compound?: string;
+  tyre_age_laps?: number;
+  fuel_kg?: number;
+  fuel_laps?: number;
+  ers_store_mj?: number;
+  ers_mode?: number;
+};
+
+export type LiveTrack = {
+  available: boolean;
+  track_length_m?: number;
+  distance?: Series;
+  x?: Series;
+  z?: Series;
+  segments?: SegmentDef[];
 };
 
 export class ApiError extends Error {
@@ -478,6 +567,14 @@ export const api = {
   fetchReference: (p: { session: string; driver: string; ref_session: string; part?: string }) =>
     get<RefSummary>("references/fetch", p, { method: "POST" }),
   benchmark: (p: { session: string; lap: number; ref: string }) => get<BenchmarkData>("benchmark", p),
+  liveReferences: () =>
+    get<{ options: { key: string; label: string }[]; choice: string; reference: LiveRef | null; note: string | null }>(
+      "live/references",
+    ),
+  chooseLiveReference: (key: string) => get<{ choice: string }>("live/reference", { key }, { method: "POST" }),
+  liveTrack: () => get<LiveTrack>("live/track"),
+  liveDemo: (action: "start" | "stop", speed = 1) =>
+    get<{ running: boolean }>("live/demo", { action, speed }, { method: "POST" }),
   engineerStatus: () => get<EngineerStatus>("engineer/status"),
   engineerReport: (p: EngineerParams) => get<EngineerReport>("engineer/report", p),
   narrate: (p: EngineerParams) => get<Narrative>("engineer/narrate", p, { method: "POST" }),

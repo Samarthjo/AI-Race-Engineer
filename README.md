@@ -18,7 +18,7 @@ and writes evidence-backed coaching reports. Runs locally on a Mac.
 | 3 | Track model, corner analysis engine | done (verified on synthetic laps) |
 | 4 | Real F1 reference, pro benchmark | done (verified on synthetic laps and real reference data) |
 | 5 | Race engineer: measured report, local-LLM write-up and Q&A with a fact check | done (verified with synthetic laps and a stand-in model; model choice pending your eval) |
-| 6 | Live telemetry | planned |
+| 6 | Live telemetry: WebSocket feed, live delta, quick report after each lap | done (verified with replayed synthetic sessions; first PS5 session pending) |
 | 7 | Driver development and history | planned |
 
 ## Quick start (Mac)
@@ -112,7 +112,7 @@ Then follow the recording checklist in [docs/golden-sessions.md](docs/golden-ses
 | `pitwall laps <session\|latest>` | Lap times, sectors, validity, flashbacks, data quality |
 | `pitwall export <session> --lap N` | Per-frame telemetry of a lap to CSV/Parquet |
 | `pitwall decode <id>` | Print decoded packets as JSON |
-| `pitwall serve` | Local web app: Lap Analysis, Driver Benchmark, Race Engineer |
+| `pitwall serve` | Local web app: Live Telemetry, Lap Analysis, Driver Benchmark, Race Engineer |
 | `pitwall compare <session> --lap N` | Lap vs session best / personal best / theoretical best, in the terminal |
 | `pitwall demo` | Synthetic demo session (labelled synthetic, never mixed with real laps) |
 | `pitwall corners <session> --lap N` | Corner-by-corner time loss and findings |

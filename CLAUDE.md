@@ -52,6 +52,9 @@ Personal F1 race engineer for F1 25 (PS5) telemetry. Runs locally on a Mac Mini 
   (`narratives` table) with model and prompt version. Bump `PROMPT_VERSION` /
   `QA_PROMPT_VERSION` when prompts change and `REPORT_VERSION` when the facts change; keep the
   golden report (`tests/golden/`) reviewed.
+- Live telemetry is provisional and never writes data: the capture records, `pitwall ingest`
+  is the source of truth. The live engine joins frames and handles flashbacks like the ingest,
+  and its delta at the line must equal the post-lap delta (`tests/test_live.py`).
 - Findings are deterministic rules with documented thresholds (`analysis/findings.py`); each
   keeps measurement and suggestion separate, and impacts within one corner may overlap.
   Never emit a finding below its threshold or without the channels it needs.
@@ -75,7 +78,9 @@ src/pitwall/reference/ real-F1 reference laps: archive + raw cache, lap tables, 
                        normalised store, era/track guards (Stage 4)
 src/pitwall/engineer/  race engineer (Stage 5): facts, deterministic report, Ollama provider,
                        grounding check, narrator, Q&A tools, stored AI texts, model eval
-src/pitwall/api/       FastAPI app, live status, built UI in static/
+src/pitwall/live/      live telemetry (Stage 6): engine (forwarded packets -> state, laps,
+                       flashbacks, health), live references and delta, quick report, demo replay
+src/pitwall/api/       FastAPI app (REST + live WebSocket), built UI in static/
 src/pitwall/synth/     synthetic track, driver model, sessions, demo, synthetic "real F1"
                        archive (never real data)
 src/pitwall/cli.py     `pitwall` command

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type LiveStatus } from "../api";
 import { fmtLap } from "../format";
 
-/** Basic live status (Stage 2). The full live screen arrives in Stage 6. */
+/** Live status in the top bar (polled every 2 s); the full view is the Live Telemetry page. */
 export function LivePill() {
   const [status, setStatus] = useState<LiveStatus | null>(null);
 
