@@ -8,7 +8,10 @@ It is the ground truth for everything the AI may say, and it is useful on its ow
   which are estimates); each keeps the measurement and the suggestion apart;
 * **where the time goes**: the segments that lose most, with the findings that explain them;
 * **strengths**, **consistency** over the session, **notes** on the data (draft corners, an
-  unclean lap, no findings, what real-F1 data cannot show).
+  unclean lap, no findings, what real-F1 data cannot show);
+* **history at this track** (Stage 7): the driver profile up to this session (trend,
+  recurring patterns, how the previous session's recommendations worked out, where the most
+  time is left); a focus item that is a recurring pattern points to it.
 
 When the data cannot support a recommendation the report says so instead of guessing.
 """
@@ -27,7 +30,7 @@ from pitwall.engineer.facts import Fact, fmt_lap, fmt_s
 from pitwall.f1udp.enums import BRAKING_ASSIST, GEARBOX_ASSIST, RACING_LINE, TRACTION_CONTROL
 from pitwall.track.model import TrackModel
 
-REPORT_VERSION = "report-1"
+REPORT_VERSION = "report-2"
 MAX_FOCUS = 3
 MAX_LOSSES = 5
 LOSS_MIN_S = 0.020  # a segment listed under "where the time goes"
@@ -53,6 +56,7 @@ class FocusItem:
     impact_s: float
     confidence: str
     basis: str
+    recurring: str | None = None  # history fact id when this is a recurring pattern
 
 
 @dataclass
@@ -82,6 +86,7 @@ class EngineerReport:
     segment_names: list[str]
     lap_numbers: list[int]
     pro: dict[str, Any] | None = None
+    history_facts: list[str] = field(default_factory=list)  # ids of the hist:* facts
     _index: dict[str, Fact] = field(default_factory=dict, repr=False)
 
     def fact(self, fact_id: str) -> Fact:
@@ -106,6 +111,7 @@ class EngineerReport:
             "strengths": self.strengths,
             "consistency": self.consistency,
             "notes": self.notes,
+            "history_facts": self.history_facts,
             "pro": self.pro,
         }
 
@@ -185,6 +191,7 @@ def build_report(
     lap_numbers: list[int],
     consistency: dict[str, Any] | None = None,
     benchmark: Benchmark | None = None,
+    history: list[Fact] | None = None,
 ) -> EngineerReport:
     names = [s.name for s in model.segments]
     facts: list[Fact] = []
@@ -457,6 +464,19 @@ def build_report(
         f"Lap {lap_number}: {fmt_lap(lap_ms)}, {fmt_s(delta)} against {_against(reference.label)}."
         + biggest
     )
+    history_ids = []
+    patterns = {}
+    for hf in history or []:
+        facts.append(hf)
+        history_ids.append(hf.id)
+        if hf.id.startswith("hist:pattern:"):
+            patterns[(hf.segment_id, hf.code)] = hf.id
+    by_id = {ff.id: ff for ff in candidates}
+    for item in focus:
+        ff = by_id.get(item.fact_id)
+        if ff is not None and ff.basis == "self":  # patterns are against your own laps
+            item.recurring = patterns.get((item.segment_id, ff.code))
+
     for f in facts:
         f.bind(names)
     return EngineerReport(
@@ -485,6 +505,7 @@ def build_report(
         segment_names=names,
         lap_numbers=sorted(set(lap_numbers)),
         pro=pro_info,
+        history_facts=history_ids,
     )
 
 
@@ -501,6 +522,8 @@ def render_text(report: EngineerReport) -> str:
             lines.append(f" {f.rank}. {f.segment_name} · {f.title}{tag}")
             lines.append(f"    Try: {f.instruction}")
             lines.append(f"    Measured: {f.measured} [{f.fact_id}]")
+            if f.recurring:
+                lines.append(f"    Recurring here: see [{f.recurring}]")
     else:
         lines.append("Focus for the next lap: nothing specific; see the notes.")
     lines.append("")
@@ -514,6 +537,7 @@ def render_text(report: EngineerReport) -> str:
         ("Strengths", report.strengths),
         ("Consistency", report.consistency),
         ("Notes", report.notes),
+        ("History at this track", report.history_facts),
     ):
         if ids:
             lines.append(title)

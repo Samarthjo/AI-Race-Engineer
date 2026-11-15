@@ -15,3 +15,11 @@ Consistency
 
 Notes
  - Corners were detected automatically (draft track model, not yet confirmed). [note:draft-corners]
+
+History at this track
+ - History at Monza (F1 Modern) up to this session: 1 session, 5 usable laps; best lap 1:11.626 (set in this session). [hist:summary]
+ - No trend can be told yet (needs at least 2 sessions). [hist:trend]
+ - Most time left at C4 (with the straight after it): over your last 5 laps you are on average +0.119 s slower there than your best (median 0.000 s). [hist:weak:c4]
+ - Most time left at C1 (with the straight after it): over your last 5 laps you are on average +0.077 s slower there than your best (median 0.000 s). [hist:weak:c1]
+ - Closest to your best at C2 (with the straight after it): on average 0.000 s from your best there over your last 5 laps. [hist:strong:c2]
+ - Closest to your best at C6 (with the straight after it): on average 0.000 s from your best there over your last 5 laps. [hist:strong:c6]

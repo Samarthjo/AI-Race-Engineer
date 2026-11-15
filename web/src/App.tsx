@@ -1,20 +1,21 @@
 import { useState } from "react";
 import { LivePill } from "./components/LivePill";
-import { Placeholder } from "./components/Placeholder";
 import { Benchmark } from "./pages/Benchmark";
+import { Dashboard } from "./pages/Dashboard";
 import { Engineer } from "./pages/Engineer";
+import { History } from "./pages/History";
 import { LapAnalysis } from "./pages/LapAnalysis";
 import { Live } from "./pages/Live";
 
 type PageKey = "dashboard" | "live" | "analysis" | "benchmark" | "engineer" | "history";
 
-const PAGES: { key: PageKey; label: string; stage?: number; blurb?: string }[] = [
-  { key: "dashboard", label: "Dashboard", stage: 7, blurb: "Your driving statistics, recent sessions and progress over time." },
+const PAGES: { key: PageKey; label: string }[] = [
+  { key: "dashboard", label: "Dashboard" },
   { key: "live", label: "Live Telemetry" },
   { key: "analysis", label: "Lap Analysis" },
   { key: "benchmark", label: "Driver Benchmark" },
   { key: "engineer", label: "Race Engineer" },
-  { key: "history", label: "Driver History", stage: 7, blurb: "Recurring patterns, strongest and weakest corners, recommendation tracking." },
+  { key: "history", label: "Driver History" },
 ];
 
 type Theme = "dark" | "light";
@@ -39,10 +40,10 @@ function applyTheme(theme: Theme): Theme {
 }
 
 export function App() {
-  const [page, setPage] = useState<PageKey>("analysis");
+  const [page, setPage] = useState<PageKey>("dashboard");
   const [theme, setTheme] = useState<Theme>(() => applyTheme(storedTheme()));
+  const [historyGroup, setHistoryGroup] = useState<string>();
 
-  const current = PAGES.find((p) => p.key === page)!;
   return (
     <>
       <header className="topbar">
@@ -82,8 +83,15 @@ export function App() {
           <Engineer />
         ) : page === "live" ? (
           <Live />
+        ) : page === "history" ? (
+          <History initialGroup={historyGroup} />
         ) : (
-          <Placeholder title={current.label} stage={current.stage!} blurb={current.blurb!} />
+          <Dashboard
+            onOpenHistory={(group) => {
+              setHistoryGroup(group);
+              setPage("history");
+            }}
+          />
         )}
       </main>
     </>

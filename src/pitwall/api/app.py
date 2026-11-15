@@ -38,6 +38,7 @@ from pitwall.engineer.narrator import PROMPT_VERSION
 from pitwall.engineer.qa import QA_PROMPT_VERSION
 from pitwall.engineer.report import render_text
 from pitwall.engineer.service import LapContext, ask_lap, build_context, narrate_lap
+from pitwall.history import service as history_service
 from pitwall.ingest.pipeline import DB_NAME
 from pitwall.live import reference as live_refs
 from pitwall.live.demo import DemoReplay
@@ -620,6 +621,36 @@ def create_app(
             ctx = lap_context(conn, body.session, body.lap, body.ref, body.ref_lap, body.pro)
             result, nid = ask_lap(conn, data_dir, ctx, provider, body.question)
         return {"narrative_id": nid, **result.to_dict()}
+
+    # ------------------------------------------------------- history (Stage 7)
+
+    @app.get("/api/dashboard")
+    def dashboard() -> dict[str, Any]:
+        """Totals, every track's summary and trend, open recommendations (the history cache
+        is brought up to date first)."""
+        with database() as conn:
+            return history_service.overview(conn, data_dir)
+
+    @app.get("/api/history")
+    def history(group: str, pro: str | None = None) -> dict[str, Any]:
+        """One track and car class: sessions over time, trend, corners, recurring patterns,
+        recommendation outcomes; with ``pro``, strongest and weakest corners against a stored
+        real-F1 lap (normalised)."""
+        with database() as conn:
+            try:
+                return history_service.track_history(conn, data_dir, group, pro_key=pro or None)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            except LookupError as exc:
+                raise HTTPException(404, str(exc).strip("'\"")) from exc
+
+    @app.post("/api/history/build")
+    def history_rebuild(force: bool = False) -> dict[str, Any]:
+        """Analyse sessions whose history is missing or out of date (every session with
+        ``force``)."""
+        with database() as conn:
+            result = history_service.rebuild(conn, data_dir, force=force)
+            return {**result, "cache": history_service.cache_state(conn)}
 
     @app.get("/api/live")
     def live_status() -> dict[str, Any]:

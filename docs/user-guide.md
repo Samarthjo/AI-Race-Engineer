@@ -24,7 +24,7 @@ at the bottom.
 | Engineer's report: focus for the next lap, where the time goes, strengths, notes (measured, no AI) | ✅ Stage 5 |
 | AI write-up and questions with a local model (Ollama); every number checked against the measurements | ✅ Stage 5 |
 | Live telemetry: inputs, tyres, fuel, ERS, live delta to your best or a real F1 lap, a quick report after every lap | ✅ Stage 6 |
-| Long-term progress tracking | Stage 7 |
+| Dashboard and Driver History: progress per track, trends, recurring patterns, where the time is left, recommendations checked in your next session; the engineer knows your history | ✅ Stage 7 |
 
 ---
 
@@ -266,6 +266,20 @@ Pick a lap: the measured report appears at once. **Write it up** asks the local 
 short write-up; the box under it lets you ask questions such as "Where do I lose most time?"
 or "How was this lap against lap 4?". The page is explained in
 [3.8](#38-the-race-engineer-page).
+
+### Step 10: follow your progress
+
+Open **Dashboard** (the app's first page) after each session: your tracks, best laps, whether
+your latest session was faster than the ones before, and what to work on next time. **Driver
+History** has the details per track, including whether last time's recommendations worked.
+In the terminal:
+
+```bash
+uv run pitwall history
+```
+
+The history updates itself after `pitwall ingest`; see [3.12](#312-the-dashboard) to
+[3.14](#314-history-in-the-terminal).
 
 ### No PS5 nearby? Try the demo
 
@@ -599,12 +613,19 @@ rejected** lists why). A green line means everything was traced. Hover a fact ta
 measured sentence behind it. The pill at the top right of the card shows whether Ollama and
 the model are ready.
 
+**History at this track.** The report ends with what your history says, up to the session
+of this lap (so a report reads the same whenever you open it): sessions and best lap so far,
+this session against the earlier ones, recurring patterns, how the previous session's
+recommendations worked out, and where the most time is left (see
+[3.13](#313-the-driver-history-page)). A focus item that is a recurring habit says so
+("Recurring here"). These are facts too (ids `hist:…`), checked like the others.
+
 **Ask your engineer.** Questions are answered the same way: the model may look things up
-(the corners, one corner in detail, this lap against another lap of the session) and must
-cite what it uses; its answer goes through the same check. Questions the data cannot answer
-(tyres, fuel, set-up, steering, other cars, past sessions) get an honest "can't tell"; if an
-answer fails the check twice, Pitwall answers "I can't answer that reliably from the measured
-data" itself.
+(the corners, one corner in detail, this lap against another lap of the session, your
+history at this track) and must cite what it uses; its answer goes through the same check.
+Questions the data cannot answer (tyres, fuel, set-up, steering, other cars) get an honest
+"can't tell"; if an answer fails the check twice, Pitwall answers "I can't answer that
+reliably from the measured data" itself.
 
 **Stored.** Every write-up and answer is stored with the model, the prompt version, the
 report version, a fingerprint of the facts it saw, the check results and how long it took, so
@@ -699,6 +720,109 @@ home network.
 **Without the PS5.** **Play demo** replays the synthetic demo session into the page at real
 speed (marked synthetic everywhere; compared only with synthetic laps). **Stop demo** ends it.
 
+### 3.12 The Dashboard
+
+The app's first page. It reads the **history**: for every usable lap of every session,
+Pitwall keeps the time spent in each corner and straight, the corner measurements (brake
+point, minimum speed, exit speed…) and the findings against that session's best lap. It is
+built automatically after `pitwall ingest` (and again when Pitwall's analysis or a track's
+corners change), so the pages stay quick.
+
+- **Tiles:** your sessions, usable laps and tracks, and your latest session. Synthetic data
+  (the demo, tests) is counted apart and never mixed with your laps.
+- **Work on next time:** for your latest session on each track, the findings that came back
+  on most of its laps (at least 2 laps and 40 % of the laps compared with the session's best
+  lap; at most three per session). Each has a **target measurement**, for example "brake point,
+  higher is better" for braking early; your next session on that track checks it.
+- **Your tracks:** one card per track and car class: best lap, your latest session's best
+  ("new personal best" when it is), a small line of your best lap per session (lower is
+  faster), and **latest vs earlier**: your latest session's laps against all earlier sessions
+  on that track (see 3.13 for how this is decided).
+
+### 3.13 The Driver History page
+
+Pick a track and car class (laps of different tracks, car classes, or real and synthetic
+data are never compared).
+
+**Tiles.** Best lap; **ideal lap** (your best time in every corner and straight, from any
+session, added up); **typical lap now** (median of your last 20 laps); **latest session vs
+earlier**.
+
+**How "faster", "slower" and "no clear change" are decided.** Pitwall compares the
+**medians** of the two groups of laps (one bad lap hardly moves a median) and estimates the
+noise from how much your laps vary. A change counts only when it is larger than a minimum
+size (0.05 s for a lap, 0.02 s for a corner) **and** larger than two standard errors. With
+fewer than **4 laps on either side** there is no verdict ("not enough data"). If the car,
+the weather or the track temperature (by more than 5 °C) differs between the two sides, a
+yellow note says so: part of the change may come from that.
+
+**Lap times per session.** Every usable lap is a dot, the session median a line, the session
+best is ringed and your overall best is the dashed line. Lower is faster. A lap far slower
+than the rest (a spin, a big mistake) is drawn at the top edge as a triangle; hover any mark
+for its time. The table under the chart has the same numbers, with the conditions (weather,
+track temperature, team id).
+
+**Where the time is left.** Each corner *together with the straight after it* (a late or
+slow exit loses most of its time on that straight), over your last 20 laps, against your
+best time there:
+
+- **mean gap**: the time left there per lap on average, mistakes included;
+- **median gap**: what a typical lap leaves, ignoring occasional mistakes;
+- **spread**: how much your time there varies.
+
+The three corners with the largest mean gap (from 0.02 s) are marked **most time left**; the
+ones nearest your best, **closest to your best** (flat-out kinks are not counted as
+strengths).
+
+**Recurring patterns.** Findings against each session's best lap that keep coming back: on
+at least 40 % (and 3) of your latest 40 compared laps, with how many sessions they appeared
+in and their average cost. A habit you fixed fades out of the list as new laps come in.
+Something you do on *every* lap, the best one included, does not show here: compare with
+your personal best or a real F1 lap for that.
+
+**Recommendations and outcomes.** After each session, up to three recommendations (as on the
+Dashboard). In the **next session on the same track** their target measurement is compared
+the same way as lap times (medians, noise, a minimum change for each measurement: 3 m for a
+brake point, 5 m for a throttle point, 2 km/h for a speed…):
+
+| Outcome | Meaning |
+|---|---|
+| ✓ improved | The measurement moved the right way, beyond its minimum change and the noise |
+| ✗ went the wrong way | It moved the wrong way, just as clearly |
+| = no clear change | Within the noise or below the minimum change |
+| ? too few laps to judge | Fewer than 3 laps with that measurement in either session |
+| … next session | Not checked yet: no later session on this track |
+
+The **time there** column shows how the corner's time changed, the same way. Targets:
+
+| Finding | Target measurement |
+|---|---|
+| Brakes earlier | Brake point, later (higher distance) is better |
+| Softer initial braking | Peak brake, higher is better |
+| Brakes later but loses the apex / Lower minimum speed | Minimum speed, higher is better |
+| Later on the throttle | Full-throttle point (or throttle pickup), earlier is better |
+| Throttle hesitation | Hesitation, lower is better |
+| Coasting | Coasting distance, lower is better |
+| Slower exit | Exit speed, higher is better |
+| Front lock-up / rear wheelspin | Lock-up / wheelspin distance, lower is better |
+
+**Latest session vs earlier, per corner and straight.** The same comparison for every
+segment's time.
+
+**Real-F1 comparison (optional).** Choose a stored real lap of this event: your best lap here
+against it, after the systematic pace difference is taken out (as on Driver Benchmark), lists
+the corners that are clearly weaker or stronger than your usual offset (at least 0.05 s and
+two standard deviations). These are estimates.
+
+### 3.14 History in the terminal
+
+| Command | What it does |
+|---|---|
+| `uv run pitwall history` | Every track: sessions, laps, best lap, latest trend; what to work on next time; sessions that could not be analysed |
+| `uv run pitwall history show monza` | One track (by name, track key, history id such as `track11-monza:0`, or a session id): sessions, trend, corners, time left, patterns, recommendations and outcomes |
+| `uv run pitwall history show monza --pro <key>` | Adds the real-F1 comparison of your best lap (keys from `pitwall ref list`) |
+| `uv run pitwall history build` | Brings the history up to date (normally automatic); `--force` analyses every session again |
+
 ---
 
 ## 4. Command reference
@@ -724,6 +848,7 @@ speed (marked synthetic everywhere; compared only with synthetic laps). **Stop d
 | `pitwall ref events \| laps \| fetch \| list` | Real F1 reference laps; see [3.7](#37-reference-laps-in-the-terminal) |
 | `pitwall benchmark <session\|latest> --lap # --driver VER` | Your lap against a real F1 lap, in the terminal (`--ref <key>`, `--ref-session`, `--part`) |
 | `pitwall engineer status \| report \| narrate \| ask \| eval` | The race engineer; see [3.9](#39-the-engineer-in-the-terminal) |
+| `pitwall history [show <track> \| build]` | Your history: progress per track, patterns, recommendations; see [3.14](#314-history-in-the-terminal) |
 | `pitwall version` | Version |
 
 All commands accept `--data-dir` (or the environment variable `PITWALL_DATA_DIR`) to use a
@@ -741,7 +866,8 @@ Everything stays on the Mac, by default in `~/PitwallData`:
   raw/<recording>/            original packets exactly as received (never modified)
       capture.json            label, note, settings, health report
       seg_00000.pwraw.zst     compressed raw packets
-  pitwall.db                  sessions and laps catalogue
+  pitwall.db                  sessions and laps catalogue, and the history (per-lap corner
+                              times, measurements and findings; rebuilt automatically)
   sessions/<recording>/<session>/
       frames.parquet          decoded player-car telemetry, one row per frame
       session.json            session details: events, setup, history, decoding stats
@@ -810,6 +936,9 @@ Everything stays on the Mac, by default in `~/PitwallData`:
 | The write-up takes long | The first request loads the model into memory (up to about a minute); later ones are faster. A smaller model (`qwen3:8b`) is quicker |
 | "The AI text failed the fact check twice" | The model wrote something the measurements do not support, so the measured report is shown instead. Try again, or compare models with `pitwall engineer eval` |
 | The Mac runs out of memory with the model | Use a smaller model, or lower `[engineer] num_ctx` in the config file |
+| Dashboard: "N session(s) could not be analysed: …" | The reason is shown; usually the track's corners were drafted for another track length (game update): re-draft with `uv run pitwall track draft <session> --force`, then `uv run pitwall history build` |
+| History says "not enough data" | A trend needs at least 4 usable laps in the latest session and in the earlier ones; recurring patterns need 5 compared laps; a recommendation's outcome needs 3 laps in each session |
+| History shows old corner names or "laps … left out" | Pitwall re-analyses after a track model change; if it did not happen, run `uv run pitwall history build` |
 | Why not FastF1 directly? | Since October 2026 Formula 1's timing archive answers "401 Unauthorized" without an F1 TV login, for FastF1 too. Using it with your login is a possible later addition (see docs/unfinished.md) |
 
 ---
@@ -1089,3 +1218,56 @@ line equals the lap-time difference exactly.
 - The live delta needs the lap to start at the line; a lap joined mid-way has none.
 - Tyre, fuel and energy values are shown as the game sends them; the demo's synthetic car
   does not simulate them.
+
+### Stage 7: driver history (2026-11-15)
+
+**New**
+- **History cache**: for every usable lap, the time in each corner and straight, the corner
+  measurements and the findings against the session's best lap, stored with the analysis
+  version and the track model version. Built after `pitwall ingest` and `pitwall demo`, and
+  rebuilt by itself when Pitwall's analysis or a track's corners change. A session that cannot
+  be analysed is recorded with the reason and shown, not retried until something changes.
+- **Dashboard** (now the app's first page): totals, your tracks with best lap, latest
+  session best and a line of your best lap per session, the latest session against the
+  earlier ones, and what to work on next time.
+- **Driver History** page: lap times per session (chart and table), latest session vs
+  earlier with the noise taken into account, where the time is left per corner (with its exit
+  straight), recurring patterns, recommendations with their target measurement and the
+  outcome in the next session (improved, no clear change, went the wrong way, too few laps),
+  per-segment changes, and optionally the strongest and weakest corners of your best lap
+  against a real F1 lap (normalised, estimates).
+- The **race engineer** knows your history: its report ends with "History at this track"
+  (up to the lap's session), a focus item that is a recurring habit says so, and questions
+  about progress are answered from the history (`get_history`) instead of refused. Report
+  version `report-2`, prompts `narrator-2` and `qa-2`.
+- Terminal: `pitwall history`, `pitwall history show <track> [--pro <key>]`,
+  `pitwall history build [--force]`. API: `/api/dashboard`, `/api/history`,
+  `POST /api/history/build`.
+
+**How to use it:** ingest your sessions as usual, then open Dashboard or run
+`uv run pitwall history`. Recommendations appear after a session with recurring findings and
+are checked on your next session on the same track.
+
+**Checked on synthetic histories with known answers**
+- Four sessions with known habits: braking 15 m early into C1 (session 1), fixed in session 2
+  ("improved": brake point 15 m later), full throttle 20 m late out of C4 (session 2) and 40 m
+  late in session 3 ("went the wrong way", 20 m later), and a two-lap session 4 ("too few laps
+  to judge"). The early braking that comes back in session 3 is a recurring pattern (7 of 16
+  compared laps, 2 sessions). The slowest corner (with its exit straight) is C4.
+- No verdict from fewer than 4 laps per side; a change inside the noise or below the minimum
+  is "no clear change"; a fixed habit fades out of the recurring patterns.
+- Real and synthetic histories stay apart (separate tracks, totals and engineer facts).
+- Renaming a corner (a new track model version) or a new analysis version rebuilds the
+  history; a session that cannot be analysed is recorded with its reason.
+- The engineer's history facts pass the fact check; an AI text that misquotes them fails it.
+
+**Limitations**
+- The thresholds (minimum changes, 40 % share, 20 recent laps) are first choices; they will be
+  tuned on your real laps (see docs/unfinished.md).
+- "Latest vs earlier" pools all earlier sessions; a long history with big early improvements
+  makes the earlier median the middle of that history.
+- Recommendations come from findings against the session's best lap, so a habit you have on
+  every lap, the best one included, is not recommended here (use personal best or a real F1
+  lap on Race Engineer or Driver Benchmark).
+- The car is shown as the game's team id; differences in set-up are not compared.
+- Live sessions are not part of the history until they are recorded and ingested.

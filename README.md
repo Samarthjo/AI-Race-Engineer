@@ -19,7 +19,7 @@ and writes evidence-backed coaching reports. Runs locally on a Mac.
 | 4 | Real F1 reference, pro benchmark | done (verified on synthetic laps and real reference data) |
 | 5 | Race engineer: measured report, local-LLM write-up and Q&A with a fact check | done (verified with synthetic laps and a stand-in model; model choice pending your eval) |
 | 6 | Live telemetry: WebSocket feed, live delta, quick report after each lap | done (verified with replayed synthetic sessions; first PS5 session pending) |
-| 7 | Driver development and history | planned |
+| 7 | Driver history: dashboard, trends, recurring patterns, recommendation tracking, profile for the engineer | done (verified with synthetic histories; thresholds to tune on your laps) |
 
 ## Quick start (Mac)
 

@@ -11,7 +11,7 @@ import pytest
 
 from pitwall.engineer.facts import Fact, parse_numbers
 from pitwall.engineer.llm import LLMUnavailable, OllamaProvider
-from pitwall.engineer.narrator import deterministic_output, narrate
+from pitwall.engineer.narrator import PROMPT_VERSION, deterministic_output, narrate
 from pitwall.engineer.report import render_text
 from pitwall.engineer.service import ask_lap, build_context, grounding_for, narrate_lap
 from pitwall.engineer.store import row_payload
@@ -249,7 +249,7 @@ def test_narration_is_checked_and_stored(setup):
     rows = db.list_narratives(setup["conn"], setup["key"], INDEX["brake_early"])
     stored = row_payload(rows[0])
     assert stored["narrative_id"] == nid and stored["status"] == "grounded"
-    assert stored["prompt_version"] == "narrator-1" and stored["model"] == "qwen3:14b"
+    assert stored["prompt_version"] == PROMPT_VERSION and stored["model"] == "qwen3:14b"
     assert stored["output"] == result.output
 
 
@@ -350,8 +350,8 @@ def test_questions_the_data_cannot_answer_are_refused(setup):
             text_reply(""),
             text_reply(
                 {
-                    "answer": "Your progress over past sessions is not available yet.",
-                    "cites": ["note:no-history"],
+                    "answer": "No trend can be told yet: it needs at least 2 sessions.",
+                    "cites": ["hist:trend"],
                     "refused": True,
                 }
             ),
@@ -359,7 +359,13 @@ def test_questions_the_data_cannot_answer_are_refused(setup):
         refused, _ = ask_lap(
             setup["conn"], setup["data"], ctx, OllamaProvider(base_url=mock.url), "Am I improving?"
         )
-        assert refused.status == "refused"
+        assert refused.status == "refused", refused.log
+        # the history tool returned the driver profile (one session so far: no trend yet)
+        tool_msg = next(m for m in mock.requests[1]["messages"] if m["role"] == "tool")
+        assert (
+            "hist:trend" in tool_msg["content"]
+            and "No trend can be told yet" in tool_msg["content"]
+        )
         invented = {"answer": "Your tyres were 95 degrees.", "cites": [], "refused": False}
         mock.replies = [text_reply(""), text_reply(invented), text_reply(invented)]
         fallback, _ = ask_lap(

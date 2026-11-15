@@ -24,7 +24,7 @@ from pitwall.engineer.llm import LLMError, LLMProvider, LLMUnavailable
 from pitwall.engineer.report import EngineerReport
 from pitwall.engineer.validate import Grounding, Violation, check_narrative, repair_citations
 
-PROMPT_VERSION = "narrator-1"
+PROMPT_VERSION = "narrator-2"
 MAX_ATTEMPTS = 2
 
 SYSTEM_PROMPT = """You are the race engineer of a sim racer who drives F1 25 (a video game) on a \
@@ -48,7 +48,10 @@ cites its finding.
 7. If there are no findings, say that the lap matched the reference within what can be \
 measured, and give no advice.
 8. Plain English, second person ("you"), short sentences. The summary has at most 3 \
-sentences. Sections are optional; use at most 4."""
+sentences. Sections are optional; use at most 4.
+9. Facts of kind "history" describe earlier sessions at this track (trend, recurring habits, \
+how the last recommendations worked out). Use them only to put this lap in context, for \
+example when a focus item is a recurring habit; this lap's findings come first."""
 
 RETRY_PROMPT = """The fact check rejected your answer:
 {problems}

@@ -1,5 +1,6 @@
 """Everything the engineer needs for one lap: comparison, corners, findings, consistency, an
-optional real-F1 benchmark, and the deterministic report built from them."""
+optional real-F1 benchmark, the driver profile at this track (history up to this session),
+and the deterministic report built from them."""
 
 from __future__ import annotations
 
@@ -21,6 +22,8 @@ from pitwall.engineer.narrator import Narrative, narrate
 from pitwall.engineer.qa import Answer, QATools, ask
 from pitwall.engineer.report import EngineerReport, build_report
 from pitwall.engineer.validate import Grounding
+from pitwall.history import service as hservice
+from pitwall.history.profile import profile_facts
 from pitwall.reference.service import check_pairing, load_reference
 from pitwall.storage import db
 from pitwall.track.model import TrackModel
@@ -61,6 +64,7 @@ def build_context(
     ref_lap: int | None = None,
     pro_key: str | None = None,
     with_consistency: bool = True,
+    with_history: bool = True,
 ) -> LapContext:
     """Raises LookupError (unknown session/lap/reference) or NotComparableError (with the
     reason the comparison cannot be made)."""
@@ -91,6 +95,7 @@ def build_context(
         ref = load_reference(conn, data_dir, pro_key)
         check_pairing(session, ref)
         bench = benchmark(trace, place_reference(ref, trace), model)
+    history = history_facts(conn, data_dir, session, model) if with_history else None
     lap_numbers = [r["lap_number"] for r in db.list_laps(conn, session_key)]
     lap_numbers += [s.get("lap_number") for s in reference.sources if s.get("lap_number")]
     if bench is not None:
@@ -106,6 +111,7 @@ def build_context(
         lap_numbers=lap_numbers,
         consistency=consistency,
         benchmark=bench,
+        history=history,
     )
     return LapContext(
         session=session,
@@ -123,6 +129,17 @@ def build_context(
         ref_lap=ref_lap,
         pro_key=pro_key,
     )
+
+
+def history_facts(
+    conn: sqlite3.Connection, data_dir: Path, session: dict[str, Any], model: TrackModel
+) -> list[Fact]:
+    """The driver profile at this track up to this session (Stage 7), as ``hist:*`` facts.
+    Sessions of the track whose history is missing or out of date are analysed first."""
+    hservice.ensure(conn, data_dir, model.key)
+    rows = hservice.load_rows(conn, model.key, session.get("formula"))
+    rows = [r for r in rows if bool(r["synthetic"]) == bool(session.get("synthetic"))]
+    return profile_facts(rows, session, model)
 
 
 # ------------------------------------------------------------------ AI helpers
@@ -155,6 +172,7 @@ def comparison_facts(
             ref_kind="lap",
             ref_lap=other["lap_index"],
             with_consistency=False,
+            with_history=False,
         )
     except NotComparableError as exc:
         raise ValueError(f"lap {lap_number} cannot be compared: {exc}") from exc

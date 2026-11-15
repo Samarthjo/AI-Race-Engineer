@@ -6,7 +6,8 @@ Tools (all read-only; each returns facts with ids, like the report):
 * ``list_corners``: the corners and straights of the track;
 * ``get_corner``: everything measured about one corner of this lap;
 * ``compare_laps``: this lap against another lap of the session;
-* ``get_history``: progress over past sessions; not available before Stage 7, and it says so.
+* ``get_history``: the driver profile at this track up to this session (Stage 7): trend,
+  recurring patterns, outcomes of the previous recommendations, where the most time is left.
 
 The answer is a JSON object ``{answer, cites, refused}`` and goes through the same grounding
 check as the report text (numbers, corners, estimates, topics), against the report's facts
@@ -27,7 +28,7 @@ from pitwall.engineer.llm import LLMError, LLMProvider, LLMUnavailable
 from pitwall.engineer.narrator import facts_hash
 from pitwall.engineer.validate import Grounding, Violation, check_answer, repair_citations
 
-QA_PROMPT_VERSION = "qa-1"
+QA_PROMPT_VERSION = "qa-2"
 MAX_TOOL_ROUNDS = 3
 MAX_ATTEMPTS = 2
 REFUSAL = "I can't answer that reliably from the measured data of this lap."
@@ -43,8 +44,8 @@ Rules (a program checks your answer; if a rule is broken, the answer is thrown a
 numbers.
 4. Name only corners from the facts you cite.
 5. If the facts and tools cannot answer the question (for example tyres, fuel, set-up, \
-steering, other cars, past sessions), set "refused" to true and say briefly what is not \
-measured. Never guess.
+steering, other cars), set "refused" to true and say briefly what is not measured. Never \
+guess. Questions about progress, habits or earlier sessions: use get_history.
 6. Answer in plain English, second person, at most 4 sentences.
 
 Facts of this lap:
@@ -104,7 +105,11 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_history",
-            "description": "Progress over past sessions and recurring patterns.",
+            "description": (
+                "History at this track up to this session: trend against earlier sessions, "
+                "recurring patterns, how the previous session's recommendations worked out, "
+                "and where the most time is left."
+            ),
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -153,11 +158,13 @@ class QATools:
             except (LookupError, ValueError, TypeError) as exc:
                 return json.dumps({"error": str(exc)})
         if name == "get_history":
+            found = [f for f in self.facts.values() if f.kind == "history"]
+            if found:
+                return self._out(found)
             note = Fact(
                 "note:no-history",
                 "note",
-                "History over past sessions is not available yet (Stage 7); only this session "
-                "has been analysed.",
+                "No history is available for this lap's track and car class.",
             )
             return self._out([note])
         return json.dumps({"error": f"unknown tool {name!r}"})

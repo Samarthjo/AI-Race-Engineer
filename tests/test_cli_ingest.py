@@ -82,9 +82,12 @@ def test_demo_and_compare(tmp_path: Path):
 
 def test_corners_and_track_commands(tmp_path: Path):
     args = ["--data-dir", str(tmp_path / "d")]
-    assert runner.invoke(app, ["demo", *args]).exit_code == 0
+    res = runner.invoke(app, ["demo", *args])
+    assert res.exit_code == 0, res.output
+    # the history build after the demo drafts the track's corners (a draft to confirm)
+    assert "History: 1 session(s) analysed" in res.output
     res = runner.invoke(app, ["track", "list", *args])
-    assert "No track models yet" in res.output
+    assert "synthetic-track" in res.output and "draft" in res.output
     res = runner.invoke(app, ["corners", "latest", "--lap", "4", *args])
     assert res.exit_code == 0, res.output
     assert "Corners (lap / reference)" in res.output and "Findings" in res.output

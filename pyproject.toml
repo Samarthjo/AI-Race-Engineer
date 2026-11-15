@@ -1,6 +1,6 @@
 [project]
 name = "pitwall-ai"
-version = "0.6.0"
+version = "0.7.0"
 description = "Personal F1 race engineer: F1 25 telemetry capture, lap analysis and benchmarking."
 readme = "README.md"
 requires-python = ">=3.12"

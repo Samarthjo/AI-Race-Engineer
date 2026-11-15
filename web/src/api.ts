@@ -339,6 +339,7 @@ export type FocusItem = {
   impact_s: number;
   confidence: string;
   basis: string;
+  recurring?: string | null; // history fact id when this is a recurring pattern
 };
 
 export type NarrativePart = { title?: string; text: string; cites: string[] };
@@ -400,6 +401,7 @@ export type EngineerReport = {
   strengths: string[];
   consistency: string[];
   notes: string[];
+  history_facts: string[];
   pro: { key: string; driver: string; label: string; lap_time_ms: number; findings: string[] } | null;
   text: string;
   history: StoredText[];
@@ -519,6 +521,207 @@ export type LiveTrack = {
   segments?: SegmentDef[];
 };
 
+// ---------------------------------------------------------------- history (Stage 7)
+
+export type ChangeStatus = "improved" | "worse" | "unchanged" | "not enough data";
+
+export type Change = {
+  status: ChangeStatus;
+  before: number | null;
+  after: number | null;
+  delta: number | null;
+  sigma: number | null;
+  threshold: number | null;
+  n_before: number;
+  n_after: number;
+};
+
+export type HistoryGroup = {
+  id: string;
+  track_key: string;
+  track_name: string;
+  formula: number | null;
+  formula_name: string;
+  synthetic: boolean;
+  sessions: number;
+  laps: number;
+  first_date: string | null;
+  last_date: string | null;
+  best_lap_ms: number;
+  best: { session_key: string; lap_index: number; lap_number: number; date: string | null };
+  latest_best_lap_ms: number;
+};
+
+export type Pattern = {
+  code: string;
+  segment_id: string;
+  segment_name: string;
+  title: string;
+  laps: number;
+  of: number;
+  share: number;
+  sessions: number;
+  of_sessions: number;
+  mean_impact_s: number;
+};
+
+export type Recommendation = {
+  code: string;
+  segment_id: string;
+  segment_name: string;
+  title: string;
+  suggestion: string | null;
+  laps: number;
+  of: number;
+  mean_impact_s: number;
+  metric: string;
+  metric_words: string;
+  unit: string;
+  better: "higher" | "lower";
+  min_change: number;
+  session_key: string;
+  session_date: string | null;
+  outcome: "improved" | "worse" | "unchanged" | "inconclusive" | "open";
+  metric_change?: Change;
+  segment_time?: Change;
+  next_session_key: string | null;
+  next_session_date?: string | null;
+};
+
+export type OpenRecommendation = Omit<Recommendation, "outcome" | "next_session_key"> & {
+  group: string;
+  track_name: string;
+  synthetic: boolean;
+};
+
+export type DashboardGroup = HistoryGroup & {
+  new_best_in_latest: boolean;
+  trend: { status: ChangeStatus; delta: number | null; before: number | null; after: number | null };
+  top_pattern: Pattern | null;
+  series: { date: string | null; best_lap_ms: number; median_s: number }[];
+};
+
+export type CacheState = {
+  analysis_version: string;
+  sessions: number;
+  by_status: Record<string, number>;
+  problems: { session_key: string; track_key: string; status: string; reason: string | null }[];
+};
+
+export type Dashboard = {
+  totals: {
+    sessions: number;
+    sessions_with_laps: number;
+    real_sessions: number;
+    synthetic_sessions: number;
+    usable_laps: number;
+    synthetic_usable_laps: number;
+    tracks: number;
+    synthetic_tracks: number;
+  };
+  built: { sessions: number; laps: number; seconds: number };
+  latest_session: {
+    session_key: string;
+    date: string | null;
+    track_name: string | null;
+    label: string | null;
+    synthetic: boolean;
+    usable_laps: number | null;
+    best_usable_lap_ms: number | null;
+  } | null;
+  groups: DashboardGroup[];
+  open_recommendations: OpenRecommendation[];
+  cache: CacheState;
+  thresholds: Record<string, number | string>;
+};
+
+export type HistorySession = {
+  session_key: string;
+  date: string | null;
+  label: string | null;
+  laps: number;
+  best_lap_ms: number;
+  best_lap_number: number;
+  median_s: number;
+  spread_s: number | null;
+  ideal_s: number | null;
+  lap_times_s: number[];
+  team_id: number | null;
+  weather: string;
+  track_temp_c: number | null;
+};
+
+export type CornerGap = {
+  segment_id: string;
+  segment_name: string;
+  kind: string;
+  zone?: string[];
+  zone_name?: string;
+  best_s: number;
+  typical_s: number;
+  mean_gap_s: number;
+  median_gap_s: number;
+  spread_s: number | null;
+  laps: number;
+};
+
+export type ProCorner = {
+  segment_id: string;
+  segment_name: string;
+  normalised_s: number;
+  sigma_s: number;
+  verdict: "weaker" | "stronger" | "within uncertainty";
+};
+
+export type ProHistory =
+  | { key: string; error: string }
+  | {
+      key: string;
+      error?: undefined;
+      driver: string;
+      season: number;
+      event: string;
+      session: string;
+      synthetic: boolean;
+      lap: { session_key: string; lap_index: number; lap_number: number; lap_time_ms: number };
+      ref_lap_time_ms: number;
+      corners: ProCorner[];
+      weakest: ProCorner[];
+      strongest: ProCorner[];
+      rule: string;
+    };
+
+export type TrackHistory = {
+  group: HistoryGroup;
+  model: { key: string; version: number; status: string; segments: { id: string; name: string; kind: string }[] } | null;
+  excluded_laps: number;
+  sessions: HistorySession[];
+  trend: Change & {
+    what: string;
+    min_laps: number;
+    min_change_s: number;
+    sessions_before?: number;
+    reason?: string;
+    caveats?: string[];
+  };
+  segment_trends: (Change & { segment_id: string; segment_name: string; kind: string })[];
+  corners: {
+    status: "ok" | "not enough data";
+    recent_laps: number;
+    min_laps: number;
+    segments: CornerGap[];
+    corners: CornerGap[];
+    weakest: CornerGap[];
+    strongest: CornerGap[];
+    ideal_lap_s: number | null;
+    typical_lap_s: number | null;
+  };
+  patterns: { status: string; compared_laps: number; window: number; min_laps: number; patterns: Pattern[] };
+  recommendations: Recommendation[];
+  thresholds: Record<string, number | string>;
+  pro?: ProHistory;
+};
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -578,6 +781,14 @@ export const api = {
   engineerStatus: () => get<EngineerStatus>("engineer/status"),
   engineerReport: (p: EngineerParams) => get<EngineerReport>("engineer/report", p),
   narrate: (p: EngineerParams) => get<Narrative>("engineer/narrate", p, { method: "POST" }),
+  dashboard: () => get<Dashboard>("dashboard"),
+  history: (group: string, pro?: string) => get<TrackHistory>("history", { group, pro: pro || undefined }),
+  buildHistory: (force = false) =>
+    get<{ sessions: number; laps: number; seconds: number; cache: CacheState }>(
+      "history/build",
+      { force: force ? "true" : undefined },
+      { method: "POST" },
+    ),
   ask: (p: EngineerParams & { question: string }) =>
     get<Answer>("engineer/ask", {}, {
       method: "POST",

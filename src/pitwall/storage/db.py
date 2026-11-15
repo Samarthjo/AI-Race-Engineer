@@ -171,6 +171,38 @@ MIGRATIONS[4] = """
     );
     CREATE INDEX narratives_lap ON narratives(session_key, lap_index, created_utc);
 """
+# Stage 7: per-lap analysis kept for history (L3/L4 cache, rebuilt from the recordings).
+MIGRATIONS[5] = """
+    CREATE TABLE lap_history (
+        session_key      TEXT NOT NULL REFERENCES sessions(session_key) ON DELETE CASCADE,
+        lap_index        INTEGER NOT NULL,
+        lap_number       INTEGER NOT NULL,
+        track_key        TEXT NOT NULL,
+        model_version    INTEGER NOT NULL,
+        synthetic        INTEGER NOT NULL,
+        formula          INTEGER,
+        first_utc        TEXT,
+        reference_lap    INTEGER NOT NULL,
+        lap_time_ms      INTEGER NOT NULL,
+        delta_s          REAL NOT NULL,
+        segments_json    TEXT NOT NULL,
+        findings_json    TEXT NOT NULL,
+        analysis_version TEXT NOT NULL,
+        created_utc      TEXT NOT NULL,
+        PRIMARY KEY (session_key, lap_index)
+    );
+    CREATE INDEX lap_history_track ON lap_history(track_key, synthetic, formula, first_utc);
+    CREATE TABLE history_sessions (
+        session_key      TEXT PRIMARY KEY REFERENCES sessions(session_key) ON DELETE CASCADE,
+        track_key        TEXT NOT NULL,
+        model_version    INTEGER,
+        analysis_version TEXT NOT NULL,
+        laps             INTEGER NOT NULL,
+        status           TEXT NOT NULL,
+        reason           TEXT,
+        created_utc      TEXT NOT NULL
+    );
+"""
 SCHEMA_VERSION = max(MIGRATIONS)
 
 
@@ -354,3 +386,57 @@ def list_narratives(
     sql += " ORDER BY created_utc DESC, rowid DESC LIMIT ?"
     args.append(int(limit))
     return list(conn.execute(sql, args))
+
+
+# ------------------------------------------------------------------ history (L3/L4)
+
+
+def replace_lap_history(
+    conn: sqlite3.Connection,
+    session_key: str,
+    rows: Iterable[dict[str, Any]],
+    state: dict[str, Any],
+) -> None:
+    """Atomically replace a session's history rows and its build state (status ok, no laps
+    or not comparable, with the reason)."""
+    with conn:
+        conn.execute("DELETE FROM lap_history WHERE session_key = ?", (session_key,))
+        conn.execute("DELETE FROM history_sessions WHERE session_key = ?", (session_key,))
+        for row in rows:
+            _insert(conn, "lap_history", row)
+        _insert(conn, "history_sessions", {"session_key": session_key, **state})
+
+
+def lap_history(
+    conn: sqlite3.Connection,
+    track_key: str | None = None,
+    synthetic: bool | None = None,
+    formula: int | None = None,
+    session_key: str | None = None,
+) -> list[sqlite3.Row]:
+    """History rows (oldest first) with the session's track name, car and conditions."""
+    sql = (
+        "SELECT h.*, s.track_name, s.team_id, s.weather, s.track_temp_c, s.air_temp_c, "
+        "s.session_type_name, s.game_mode_name, s.capture_label "
+        "FROM lap_history h JOIN sessions s ON s.session_key = h.session_key WHERE 1 = 1"
+    )
+    args: list[Any] = []
+    if track_key is not None:
+        sql += " AND h.track_key = ?"
+        args.append(track_key)
+    if synthetic is not None:
+        sql += " AND h.synthetic = ?"
+        args.append(int(synthetic))
+    if formula is not None:
+        sql += " AND h.formula IS ?"
+        args.append(formula)
+    if session_key is not None:
+        sql += " AND h.session_key = ?"
+        args.append(session_key)
+    sql += " ORDER BY h.first_utc, h.session_key, h.lap_index"
+    return list(conn.execute(sql, args))
+
+
+def history_state(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
+    """session_key -> how its history was built (versions, laps, status, reason)."""
+    return {r["session_key"]: dict(r) for r in conn.execute("SELECT * FROM history_sessions")}

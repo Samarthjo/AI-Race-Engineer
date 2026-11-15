@@ -40,6 +40,10 @@ engineer_app = typer.Typer(
     help="Race engineer: measured report, AI write-up (local model) and questions.",
 )
 app.add_typer(engineer_app, name="engineer")
+history_app = typer.Typer(
+    help="Driver history: progress per track, recurring patterns, recommendation tracking.",
+)
+app.add_typer(history_app, name="history")
 
 console = Console()
 
@@ -456,6 +460,19 @@ def ingest(
             console.print(
                 f"  [dim]{len(res.skipped_sessions)} session(s) without lap data skipped[/]"
             )
+    _update_history(cfg, conn)
+
+
+def _update_history(cfg: Config, conn: Any) -> None:
+    """Bring the history cache up to date (only sessions that are new or out of date)."""
+    from pitwall.history.service import ensure
+
+    built = ensure(conn, cfg.data_dir)
+    if built["sessions"]:
+        console.print(
+            f"History: {built['sessions']} session(s) analysed ({built['laps']} laps) in "
+            f"{built['seconds']} s."
+        )
 
 
 @app.command()
@@ -770,6 +787,7 @@ def demo(
         f"Stored {len(keys)} synthetic reference laps (drivers PRO and FST) for the Driver "
         "Benchmark; they stand in for real F1 data and are only compared with synthetic laps."
     )
+    _update_history(cfg, conn)
     console.print(
         "Try: [bold]uv run pitwall laps latest[/], [bold]uv run pitwall benchmark latest "
         "--lap 1 --driver PRO[/]  or  [bold]uv run pitwall serve[/]"
@@ -1687,6 +1705,295 @@ def engineer_eval(
         f"· median {summary['median_s']:.1f} s per lap"
     )
     console.print(f"Rate the write-ups in [bold]{path}[/] (accuracy and usefulness, 1-5).")
+
+
+# ------------------------------------------------------------------ history (Stage 7)
+
+_OUTCOME_STYLE = {
+    "improved": "green",
+    "worse": "red",
+    "unchanged": "yellow",
+    "inconclusive": "dim",
+    "open": "cyan",
+    "not enough data": "dim",
+}
+
+
+def _date(utc: str | None) -> str:
+    return (utc or "")[:16].replace("T", " ")
+
+
+def _outcome(status: str) -> str:
+    return f"[{_OUTCOME_STYLE.get(status, 'white')}]{status}[/]"
+
+
+def _trend_text(t: dict[str, Any]) -> str:
+    if t["status"] == "not enough data":
+        return f"not enough data ({t.get('reason', '')})"
+    after, before = _fmt_ms(round(t["after"] * 1000)), _fmt_ms(round(t["before"] * 1000))
+    return (
+        f"{_outcome(t['status'])} {_signed(t['delta'])} s (median {after} vs {before}; "
+        f"counts from {t['threshold']:.3f} s)"
+    )
+
+
+def _resolve_group(conn: Any, cfg: Config, arg: str) -> str:
+    """A history group id (track key and car class) from a group id, a track key or name,
+    or a session id (its track and car class)."""
+    from pitwall.history import service as hs
+    from pitwall.history import trends
+    from pitwall.track.service import session_track_key
+
+    if ":" in arg:
+        return arg
+    groups = trends.groups(hs.load_rows(conn, any_formula=True))
+    hits = [
+        g
+        for g in groups
+        if arg.lower() in (g["track_key"].lower(), (g["track_name"] or "").lower())
+        or arg.lower() in (g["track_name"] or "").lower()
+    ]
+    if len(hits) == 1:
+        return hits[0]["id"]
+    if len(hits) > 1:
+        console.print(f"[yellow]{len(hits)} histories match {arg!r}; use one of these ids:[/]")
+        for g in hits:
+            kind = "synthetic" if g["synthetic"] else "real"
+            console.print(f"  {g['id']}  ({g['track_name']}, {g['formula_name']}, {kind})")
+        raise typer.Exit(1)
+    s = dict(_pick_session(conn, arg))
+    return trends.group_id(session_track_key(s), s.get("formula"))
+
+
+@history_app.callback(invoke_without_command=True)
+def history_overview(
+    ctx: typer.Context, config: ConfigOpt = None, data_dir: DataDirOpt = None
+) -> None:
+    """Every track you have driven: sessions, laps, best lap and the latest trend."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from pitwall.history import service as hs
+
+    cfg = _load(config, data_dir)
+    conn = _db(cfg)
+    ov = hs.overview(conn, cfg.data_dir)
+    if ov["built"]["sessions"]:
+        console.print(
+            f"[dim]History updated: {ov['built']['sessions']} session(s), {ov['built']['laps']} "
+            f"laps in {ov['built']['seconds']} s.[/]"
+        )
+    if not ov["groups"]:
+        console.print("No history yet: record and ingest some laps first (or `pitwall demo`).")
+        return
+    t = Table(title="Driver history")
+    for col in ("id", "track", "car", "data", "sessions", "laps", "best", "latest best", "trend"):
+        t.add_column(col)
+    for g in ov["groups"]:
+        tr = g["trend"]
+        trend = (
+            "not enough data"
+            if tr["status"] == "not enough data"
+            else f"{_outcome(tr['status'])} {_signed(tr['delta'])} s"
+        )
+        t.add_row(
+            g["id"],
+            g["track_name"],
+            g["formula_name"],
+            "[magenta]synthetic[/]" if g["synthetic"] else "real",
+            str(g["sessions"]),
+            str(g["laps"]),
+            _fmt_ms(g["best_lap_ms"]),
+            _fmt_ms(g["latest_best_lap_ms"])
+            + (" [green]new best[/]" if g["new_best_in_latest"] else ""),
+            trend,
+        )
+    console.print(t)
+    console.print("[dim]Trend: latest session against the earlier ones (medians, noise-aware).[/]")
+    if ov["open_recommendations"]:
+        console.print("\n[bold]Work on next time[/] (from your latest session on each track)")
+        for r in ov["open_recommendations"]:
+            tag = " [magenta](synthetic)[/]" if r["synthetic"] else ""
+            console.print(
+                f" - {r['track_name']}{tag} · {r['segment_name']} · {r['title']} "
+                f"({r['laps']} of {r['of']} laps): {r['suggestion'] or ''}"
+            )
+            console.print(f"   [dim]Target: {r['metric_words']} ({r['better']} is better)[/]")
+    for prob in ov["cache"]["problems"]:
+        console.print(f"[yellow]Not analysed:[/] {prob['session_key']}: {prob['reason']}")
+    console.print("Details: [bold]uv run pitwall history show <track>[/]")
+
+
+@history_app.command("show")
+def history_show(
+    track: Annotated[
+        str, typer.Argument(help="History id, track name or key, or a session id (its track)")
+    ],
+    pro: Annotated[
+        str | None, typer.Option(help="Stored real-F1 reference key (see `pitwall ref list`)")
+    ] = None,
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """One track's history: sessions, trend, corners, recurring patterns, recommendations."""
+    from pitwall.history import service as hs
+
+    cfg = _load(config, data_dir)
+    conn = _db(cfg)
+    gid = _resolve_group(conn, cfg, track)
+    try:
+        v = hs.track_history(conn, cfg.data_dir, gid, pro_key=pro)
+    except (LookupError, ValueError) as exc:
+        console.print(f"[red]{str(exc).strip(chr(39))}[/]")
+        raise typer.Exit(1) from None
+    g = v["group"]
+    kind = "[magenta]synthetic data[/]" if g["synthetic"] else "real laps"
+    console.print(
+        f"[bold]{g['track_name']}[/] · {g['formula_name']} · {kind} · {g['sessions']} sessions · "
+        f"{g['laps']} usable laps · best {_fmt_ms(g['best_lap_ms'])} ({_date(g['best']['date'])}, "
+        f"lap {g['best']['lap_number']})"
+    )
+    if v["excluded_laps"]:
+        console.print(
+            f"[yellow]{v['excluded_laps']} laps were analysed with an older version of the "
+            "corners and are left out.[/]"
+        )
+
+    t = Table(title="Sessions")
+    for col in ("date", "label", "laps", "best", "median", "spread", "ideal"):
+        t.add_column(col)
+    for s in v["sessions"]:
+        t.add_row(
+            _date(s["date"]),
+            s["label"] or "",
+            str(s["laps"]),
+            _fmt_ms(s["best_lap_ms"]),
+            _fmt_ms(round(s["median_s"] * 1000)),
+            "-" if s["spread_s"] is None else f"±{s['spread_s']:.3f}",
+            "-" if s["ideal_s"] is None else _fmt_ms(round(s["ideal_s"] * 1000)),
+        )
+    console.print(t)
+    tr = v["trend"]
+    console.print(f"[bold]Trend[/] (latest session vs earlier ones): {_trend_text(tr)}")
+    for c in tr.get("caveats", []):
+        console.print(f"  [yellow]{c}[/]")
+
+    seg = [x for x in v["segment_trends"] if x["status"] in ("improved", "worse")]
+    if v["segment_trends"]:
+        quiet = len(v["segment_trends"]) - len(seg)
+        console.print(
+            f"[bold]Corners and straights[/] (latest vs earlier): {len(seg)} changed, "
+            f"{quiet} unchanged or not enough laps"
+        )
+        for x in seg:
+            console.print(
+                f"  {x['segment_name']}: {_outcome(x['status'])} {_signed(x['delta'], 3)} s"
+            )
+
+    corners = v["corners"]
+    if corners["status"] == "ok":
+        t = Table(title=f"Time left against your best (last {corners['recent_laps']} laps)")
+        for col in ("corner (with exit straight)", "mean gap", "median gap", "spread", ""):
+            t.add_column(col)
+        weak = {c["segment_id"] for c in corners["weakest"]}
+        strong = {c["segment_id"] for c in corners["strongest"]}
+        for c in corners["corners"]:
+            tag = (
+                "[red]weakest[/]"
+                if c["segment_id"] in weak
+                else "[green]strongest[/]"
+                if c["segment_id"] in strong
+                else ""
+            )
+            t.add_row(
+                c["zone_name"],
+                _signed(c["mean_gap_s"]),
+                _signed(c["median_gap_s"]),
+                "-" if c["spread_s"] is None else f"±{c['spread_s']:.3f}",
+                tag,
+            )
+        console.print(t)
+        if corners["ideal_lap_s"]:
+            ideal = _fmt_ms(round(corners["ideal_lap_s"] * 1000))
+            typical = _fmt_ms(round(corners["typical_lap_s"] * 1000))
+            console.print(f"Ideal lap from your best segments: {ideal} · typical lap: {typical}")
+    else:
+        console.print(
+            f"[dim]Corners: not enough laps yet (needs {corners['min_laps']} recent laps).[/]"
+        )
+
+    pat = v["patterns"]
+    console.print(f"\n[bold]Recurring patterns[/] (latest {pat['compared_laps']} compared laps)")
+    if pat["status"] != "ok":
+        console.print(
+            f"  [dim]not enough data: needs {pat['min_laps']} laps compared with their "
+            "session's best[/]"
+        )
+    elif not pat["patterns"]:
+        console.print("  none above the thresholds")
+    for x in pat["patterns"]:
+        console.print(
+            f"  {x['segment_name']} · {x['title']}: {x['laps']} of {x['of']} laps, in "
+            f"{x['sessions']} of {x['of_sessions']} sessions, {_signed(x['mean_impact_s'])} s "
+            "each time"
+        )
+
+    console.print("\n[bold]Recommendations and outcomes[/]")
+    if not v["recommendations"]:
+        console.print("  none yet (made after a session with recurring findings)")
+    for r in v["recommendations"]:
+        line = (
+            f"  {_date(r['session_date'])} · {r['segment_name']} · {r['title']} "
+            f"({r['laps']} of {r['of']} laps) → {_outcome(r['outcome'])}"
+        )
+        if r["outcome"] not in ("open", "inconclusive"):
+            m = r["metric_change"]
+            unit = f" {r['unit']}" if r["unit"] else ""
+            before, after = _m(m["before"], 1), _m(m["after"], 1)
+            line += f" · {r['metric_words']}: {before}{unit} → {after}{unit}"
+            st = r["segment_time"]
+            if st["delta"] is not None:
+                line += f" · time there {_signed(st['delta'])} s"
+        console.print(line)
+        if r["outcome"] == "open":
+            console.print(f"    [cyan]Try:[/] {r['suggestion'] or r['title']}")
+
+    if pro:
+        p = v.get("pro") or {}
+        if p.get("error"):
+            console.print(f"[red]Real-F1 comparison: {p['error']}[/]")
+        else:
+            console.print(
+                f"\n[bold]Against {p['driver']} ({p['season']} {p['event']} {p['session']})[/]"
+                f", your best lap here, normalised (estimates; {p['rule']}):"
+            )
+            for label, items in (("weaker", p["weakest"]), ("stronger", p["strongest"])):
+                for c in items:
+                    console.print(
+                        f"  {label}: {c['segment_name']} {_signed(c['normalised_s'])} s "
+                        f"(± {c['sigma_s']:.3f})"
+                    )
+            if not p["weakest"] and not p["strongest"]:
+                console.print("  every corner within the uncertainty")
+
+
+@history_app.command("build")
+def history_build_cmd(
+    force: Annotated[bool, typer.Option(help="Analyse every session again")] = False,
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Analyse sessions whose history is missing or out of date (normally automatic)."""
+    from pitwall.history import service as hs
+
+    cfg = _load(config, data_dir)
+    conn = _db(cfg)
+    res = hs.rebuild(conn, cfg.data_dir, force=force)
+    console.print(
+        f"History: {res['sessions']} session(s) analysed ({res['laps']} laps) in "
+        f"{res['seconds']} s."
+    )
+    for prob in hs.cache_state(conn)["problems"]:
+        console.print(f"[yellow]Not analysed:[/] {prob['session_key']}: {prob['reason']}")
 
 
 if __name__ == "__main__":

@@ -250,6 +250,13 @@ export function Engineer() {
                       {f.impact_s > 0.0005 && <span className="loss">{fmtDelta(f.impact_s)} s</span>}{" "}
                       <Cites ids={[f.fact_id]} facts={facts} />
                     </div>
+                    {f.recurring && (
+                      <div className="finding-detail">
+                        <span className="corner-tag">Recurring here</span>{" "}
+                        <span className="muted">{facts.get(f.recurring)?.text}</span>{" "}
+                        <Cites ids={[f.recurring]} facts={facts} />
+                      </div>
+                    )}
                   </li>
                 ))}
               </ol>
@@ -273,6 +280,7 @@ export function Engineer() {
                 ["Strengths", report.strengths],
                 ["Consistency", report.consistency],
                 ["Notes", report.notes],
+                ["History at this track", report.history_facts ?? []],
               ] as const
             ).map(
               ([title, ids]) =>
