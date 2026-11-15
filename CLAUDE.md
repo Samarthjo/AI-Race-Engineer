@@ -9,6 +9,10 @@ Personal F1 race engineer for F1 25 (PS5) telemetry. Runs locally on a Mac Mini 
 
 - Cars: base **2025** cars, so the **F1 25 UDP format** (packetFormat 2025) and the **2025 FastF1
   season** as reference. The 2026 Season Pack format is postponed.
+- Reference data: FastF1's 2025 data read from the public TracingInsights archive
+  (`pitwall.reference`), because F1's own archive needs an F1 TV login since Oct 2026.
+  Downloaded files go to the raw cache unchanged; real F1 data is never committed to the
+  repository (tests use `pitwall.synth.pro`). Open items live in `docs/unfinished.md`.
 - Driver input: **DualSense controller**, **no assists**, Time Trial first, **Monza** first.
 - UI: React + TypeScript (Stage 2+). Backend: Python, FastAPI.
 - AI engineer: **local model first** (Ollama), behind an `LLMProvider` interface; Claude API
@@ -37,7 +41,11 @@ Personal F1 race engineer for F1 25 (PS5) telemetry. Runs locally on a Mac Mini 
 - Keep raw data, calculated metrics and AI-generated text strictly separate.
 - Never assume F1 25 and real F1 physics are identical.
 - Synthetic data (`pitwall.synth`, `pitwall demo`) is always marked `synthetic` and must never
-  mix with real laps (personal bests, history).
+  mix with real laps (personal bests, history, references).
+- Comparisons with real F1 data check capability flags first (binary brake, no steering, no
+  wheel slip) and carry measured uncertainty; pro findings use the physics-normalised values
+  (`analysis/benchmark.py`). Bump `REFERENCE_PIPELINE_VERSION` (`reference/store.py`) when
+  the normalised reference format changes.
 - Findings are deterministic rules with documented thresholds (`analysis/findings.py`); each
   keeps measurement and suggestion separate, and impacts within one corner may overlap.
   Never emit a finding below its threshold or without the channels it needs.
@@ -54,10 +62,14 @@ src/pitwall/f1udp/     packet layouts (f125.py), decoder, enum names
 src/pitwall/ingest/    sessions, flashback/pause handling, laps, frame tables (L1/L2)
 src/pitwall/storage/   SQLite catalogue
 src/pitwall/analysis/  traces, delta, references, lap metrics (Stage 2); corners, findings,
-                       consistency (Stage 3)
-src/pitwall/track/     track models: draft from a lap, JSON storage, confirm/rename
+                       consistency (Stage 3); sampled metrics + error bars, benchmark (Stage 4)
+src/pitwall/track/     track models: draft from a lap, JSON storage, confirm/rename; registration
+                       (placing a real F1 lap on your track)
+src/pitwall/reference/ real-F1 reference laps: archive + raw cache, lap tables, telemetry checks,
+                       normalised store, era/track guards (Stage 4)
 src/pitwall/api/       FastAPI app, live status, built UI in static/
-src/pitwall/synth/     synthetic track, driver model, sessions, demo (never real data)
+src/pitwall/synth/     synthetic track, driver model, sessions, demo, synthetic "real F1"
+                       archive (never real data)
 src/pitwall/cli.py     `pitwall` command
 web/                   React + TypeScript UI (built into src/pitwall/api/static/)
 tests/                 tests against synthetic sessions with known answers

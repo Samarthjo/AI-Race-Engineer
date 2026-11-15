@@ -22,6 +22,7 @@ lap   driving                                                     loses in
 
 from __future__ import annotations
 
+import sqlite3
 import time
 from pathlib import Path
 
@@ -79,3 +80,24 @@ def write_demo_capture(raw_dir: Path) -> Path:
         },
     )
     return directory
+
+
+def write_demo_references(data_dir: Path, conn: sqlite3.Connection) -> list[str]:
+    """Synthetic stand-ins for real F1 reference laps on the demo track (drivers PRO, same car
+    as the demo laps, and FST, a faster car), stored like real ones but marked synthetic."""
+    from pitwall.reference.service import (
+        SYNTHETIC_EVENT,
+        fetch_reference,
+        make_archive,
+        synthetic_archive_dir,
+    )
+    from pitwall.synth.pro import SESSION, write_archive
+
+    root = synthetic_archive_dir(data_dir)
+    if not (root / "schedule_2025.json").exists():
+        write_archive(root)
+    archive = make_archive(data_dir, 2025, synthetic=True)
+    return [
+        fetch_reference(conn, data_dir, archive, SYNTHETIC_EVENT, SESSION, driver).key
+        for driver in ("PRO", "FST")
+    ]

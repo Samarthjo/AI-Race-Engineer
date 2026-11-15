@@ -1,11 +1,12 @@
 # Pitwall AI
 
 Personal Formula 1 race engineer for **F1 25 on PS5**. Records your telemetry over UDP, analyses
-your laps corner by corner, benchmarks them against real F1 drivers (FastF1, 2025 season) and
-writes evidence-backed coaching reports. Runs locally on a Mac.
+your laps corner by corner, benchmarks them against real F1 drivers (2025 season, FastF1 data)
+and writes evidence-backed coaching reports. Runs locally on a Mac.
 
 - **How to use it:** [docs/user-guide.md](docs/user-guide.md)
 - **Development plan:** [docs/plan.md](docs/plan.md)
+- **Open items:** [docs/unfinished.md](docs/unfinished.md)
 
 ## Status
 
@@ -15,7 +16,7 @@ writes evidence-backed coaching reports. Runs locally on a Mac.
 | 1 | Packet decoder, sessions and laps | done (awaiting validation on real recordings) |
 | 2 | Lap processing, self-comparison, first UI | done (verified on synthetic laps) |
 | 3 | Track model, corner analysis engine | done (verified on synthetic laps) |
-| 4 | FastF1 reference, pro benchmark | planned |
+| 4 | Real F1 reference, pro benchmark | done (verified on synthetic laps and real reference data) |
 | 5 | Race engineer reports (deterministic, then local LLM) | planned |
 | 6 | Live telemetry | planned |
 | 7 | Driver development and history | planned |
@@ -77,6 +78,15 @@ writes evidence-backed coaching reports. Runs locally on a Mac.
    No recordings yet? `uv run pitwall demo` creates a clearly labelled synthetic session to
    explore the app.
 
+9. Benchmark against a real F1 driver (downloads the lap once, then works offline):
+
+   ```bash
+   uv run pitwall ref fetch monza VER
+   ```
+
+   Then open **Driver Benchmark** in the app, or run
+   `uv run pitwall benchmark latest --lap <#> --driver VER`.
+
 Then follow the recording checklist in [docs/golden-sessions.md](docs/golden-sessions.md).
 
 ## Commands
@@ -94,11 +104,13 @@ Then follow the recording checklist in [docs/golden-sessions.md](docs/golden-ses
 | `pitwall laps <session\|latest>` | Lap times, sectors, validity, flashbacks, data quality |
 | `pitwall export <session> --lap N` | Per-frame telemetry of a lap to CSV/Parquet |
 | `pitwall decode <id>` | Print decoded packets as JSON |
-| `pitwall serve` | Local web app: Lap Analysis (charts, track map, metrics) |
+| `pitwall serve` | Local web app: Lap Analysis, Driver Benchmark |
 | `pitwall compare <session> --lap N` | Lap vs session best / personal best / theoretical best, in the terminal |
 | `pitwall demo` | Synthetic demo session (labelled synthetic, never mixed with real laps) |
 | `pitwall corners <session> --lap N` | Corner-by-corner time loss and findings |
 | `pitwall track list\|show\|draft\|confirm\|rename` | Track models (detected corners) |
+| `pitwall ref events\|laps\|fetch\|list` | Real F1 reference laps (2025): list, download once, store |
+| `pitwall benchmark <session> --lap N --driver VER` | Your lap against a real F1 lap: measured and physics-normalised |
 
 ## Data
 
@@ -112,8 +124,9 @@ Default data directory: `~/PitwallData` (override with `--data-dir`, `PITWALL_DA
 ```
 
 ```
-~/PitwallData/pitwall.db                                 sessions + laps catalogue
+~/PitwallData/pitwall.db                                 sessions, laps, reference laps
 ~/PitwallData/sessions/<capture_id>/<session>/frames.parquet  decoded player telemetry per frame
+~/PitwallData/references/raw/...                         downloaded real-F1 files, unchanged
 ```
 
 Raw captures are the foundation: every later layer (laps, metrics, findings, reports) can be

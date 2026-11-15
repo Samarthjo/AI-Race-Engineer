@@ -5,6 +5,9 @@ Lookup order (later wins):
   2. config file: $PITWALL_CONFIG, else ~/.config/pitwall/config.toml (if it exists)
   3. environment: PITWALL_DATA_DIR
   4. CLI options (applied by the caller)
+
+The ``[reference]`` table sets where real-F1 reference data is downloaded from (see
+``pitwall.reference.archive``); ``{season}`` in a URL is replaced by the season.
 """
 
 from __future__ import annotations
@@ -14,6 +17,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from pitwall.reference.archive import SCHEDULE_URL, TI_BASE_URL, TIMEOUT_S
 
 DEFAULT_CONFIG_PATH = Path("~/.config/pitwall/config.toml").expanduser()
 DEFAULT_DATA_DIR = Path("~/PitwallData").expanduser()
@@ -34,9 +39,17 @@ class CaptureConfig:
 
 
 @dataclass
+class ReferenceConfig:
+    base_url: str = TI_BASE_URL
+    schedule_url: str = SCHEDULE_URL
+    timeout_s: float = TIMEOUT_S
+
+
+@dataclass
 class Config:
     data_dir: Path = DEFAULT_DATA_DIR
     capture: CaptureConfig = field(default_factory=CaptureConfig)
+    reference: ReferenceConfig = field(default_factory=ReferenceConfig)
     source: Path | None = None
 
     @property
@@ -60,15 +73,15 @@ def load_config(path: Path | None = None, env: dict[str, str] | None = None) -> 
 
 
 def _apply(cfg: Config, data: dict[str, Any]) -> None:
-    unknown = set(data) - {"data_dir", "capture"}
+    unknown = set(data) - {"data_dir", "capture", "reference"}
     if unknown:
         raise ValueError(f"unknown config keys: {sorted(unknown)}")
     if "data_dir" in data:
         cfg.data_dir = Path(str(data["data_dir"])).expanduser()
-    cap = data.get("capture", {})
-    valid = set(CaptureConfig.__dataclass_fields__)
-    bad = set(cap) - valid
-    if bad:
-        raise ValueError(f"unknown [capture] keys: {sorted(bad)}")
-    for key, value in cap.items():
-        setattr(cfg.capture, key, value)
+    for table, target in (("capture", cfg.capture), ("reference", cfg.reference)):
+        values = data.get(table, {})
+        bad = set(values) - set(type(target).__dataclass_fields__)
+        if bad:
+            raise ValueError(f"unknown [{table}] keys: {sorted(bad)}")
+        for key, value in values.items():
+            setattr(target, key, value)

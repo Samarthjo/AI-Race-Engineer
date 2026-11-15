@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { LivePill } from "./components/LivePill";
 import { Placeholder } from "./components/Placeholder";
+import { Benchmark } from "./pages/Benchmark";
 import { LapAnalysis } from "./pages/LapAnalysis";
 
 type PageKey = "dashboard" | "live" | "analysis" | "benchmark" | "engineer" | "history";
@@ -9,7 +10,7 @@ const PAGES: { key: PageKey; label: string; stage?: number; blurb?: string }[] =
   { key: "dashboard", label: "Dashboard", stage: 7, blurb: "Your driving statistics, recent sessions and progress over time." },
   { key: "live", label: "Live Telemetry", stage: 6, blurb: "Inputs, tyres, fuel, ERS and a live delta while you drive." },
   { key: "analysis", label: "Lap Analysis" },
-  { key: "benchmark", label: "Driver Benchmark", stage: 4, blurb: "Your lap against real Formula 1 drivers (FastF1, 2025 season)." },
+  { key: "benchmark", label: "Driver Benchmark" },
   { key: "engineer", label: "Race Engineer", stage: 5, blurb: "Evidence-based reports and next-lap instructions." },
   { key: "history", label: "Driver History", stage: 7, blurb: "Recurring patterns, strongest and weakest corners, recommendation tracking." },
 ];
@@ -73,6 +74,8 @@ export function App() {
       <main>
         {page === "analysis" ? (
           <LapAnalysis theme={theme} />
+        ) : page === "benchmark" ? (
+          <Benchmark theme={theme} />
         ) : (
           <Placeholder title={current.label} stage={current.stage!} blurb={current.blurb!} />
         )}

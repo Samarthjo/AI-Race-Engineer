@@ -171,3 +171,75 @@ def test_consistency_tracks_and_confirm(client):
     r = c.post(f"/api/tracks/{k}/confirm")
     assert r.status_code == 200 and r.json()["status"] == "confirmed"
     assert c.post("/api/tracks/nope/confirm").status_code == 404
+
+
+# ------------------------------------------------------------------ Stage 4: benchmark
+
+
+@pytest.fixture(scope="module")
+def bench_client(tmp_path_factory) -> tuple[TestClient, str]:
+    from pitwall.synth.demo import write_demo_references
+
+    data: Path = tmp_path_factory.mktemp("bench")
+    cap = write_demo_capture(data / "raw")
+    conn = db.connect(data / DB_NAME)
+    res = ingest_capture(cap, data, conn)
+    write_demo_references(data, conn)
+    return TestClient(create_app(data, live=None)), res.sessions[0].session_key
+
+
+def test_references_for_a_session(bench_client):
+    c, key = bench_client
+    body = c.get("/api/references", params={"session": key}).json()
+    assert body["event"] == "Synthetic Grand Prix" and body["season"] == 2025
+    assert body["synthetic"] is True and body["sessions"] == ["Qualifying"]
+    assert {r["driver"] for r in body["stored"]} == {"PRO", "FST"}
+    assert all(r["synthetic"] and r["capabilities"]["brake"] == "binary" for r in body["stored"])
+    assert len(c.get("/api/references").json()["stored"]) == 2
+    drivers = c.get("/api/references/drivers", params={"session": key}).json()["drivers"]
+    assert [d["driver"] for d in drivers] == ["FST", "PRO"]
+    fetched = c.post("/api/references/fetch", params={"session": key, "driver": "PRO"})
+    assert fetched.status_code == 200 and fetched.json()["lap_number"] == 2
+    bad = c.post("/api/references/fetch", params={"session": key, "driver": "PRO", "lap": 4})
+    assert bad.status_code == 422 and "deleted" in bad.json()["detail"]
+    missing = c.post("/api/references/fetch", params={"session": key, "driver": "XXX"})
+    assert missing.status_code == 502
+
+
+def test_benchmark_payload(bench_client):
+    c, key = bench_client
+    ref = "synthetic-2025-synthetic-grand-prix-qualifying-pro-l2"
+    r = c.get("/api/benchmark", params={"session": key, "lap": 1, "ref": ref})
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert b["reference"]["driver"] == "PRO" and b["reference"]["synthetic"] is True
+    assert b["registration"]["quality"] == "good"
+    tr = b["trace"]
+    n = len(tr["distance"])
+    assert len(tr["ref_x"]) == n and len(tr["ref"]["speed"]) == n
+    assert all(v is None for v in tr["ref"]["steer"])  # no steering in the reference
+    assert sum(b["reference"]["sectors_on_your_lines_s"]) == pytest.approx(
+        b["reference"]["lap_time_ms"] / 1000, abs=0.002
+    )
+    assert len(b["segments"]) == len(b["track_model"]["segments"])
+    corner = next(s for s in b["segments"] if s["segment"]["id"] == "c1")
+    assert set(corner["metrics"]) >= {"brake_onset_m", "min_speed_kmh", "exit_speed_kmh"}
+    # demo lap 2 brakes 15 m early into T1: found against the same-car reference
+    assert [(f["code"], f["segment_id"], f["basis"]) for f in b["findings"]] == [
+        ("EARLY_BRAKE", "c1", "pro_normalised")
+    ]
+    assert "steering (no steering data in the reference)" in b["not_assessed"]
+    assert b["systematic"]["time"]["braking_corners"]["pace_ratio"] is not None
+
+
+def test_benchmark_errors(bench_client):
+    c, key = bench_client
+    ref = "synthetic-2025-synthetic-grand-prix-qualifying-pro-l2"
+    assert (
+        c.get("/api/benchmark", params={"session": key, "lap": 1, "ref": "nope"}).status_code == 404
+    )
+    out_lap = c.get("/api/benchmark", params={"session": key, "lap": 0, "ref": ref})
+    assert out_lap.status_code == 422
+    assert (
+        c.get("/api/benchmark", params={"session": key, "lap": 99, "ref": ref}).status_code == 404
+    )

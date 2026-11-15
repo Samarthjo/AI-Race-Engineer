@@ -410,6 +410,11 @@ losses with evidence → ranked next-lap instructions. LLM narration (5b) follow
   That points to mid-size instruct models (roughly 7–14B parameters, 4-bit quantised) with
   tool calling. The final pick is made by the Stage 5 eval, not by size alone.
 - Code hosting: https://github.com/Samarthjo/AI-Race-Engineer
+- Reference data source (Stage 4): since about 15 Oct 2026 Formula 1's timing archive needs an
+  F1 TV login (for FastF1 too) and FastF1's mirror has no 2025 data. The reference service
+  therefore reads FastF1's processed 2025 data from the public TracingInsights archive
+  (github.com/TracingInsights/2025), behind the same raw cache and normalised store; FastF1
+  with an F1 TV login and OpenF1 stay possible later sources (docs/unfinished.md).
 
 **Still open (not blocking now):** second track (end of Stage 3).
 

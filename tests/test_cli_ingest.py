@@ -101,3 +101,31 @@ def test_corners_and_track_commands(tmp_path: Path):
     assert res.exit_code == 0, res.output
     res = runner.invoke(app, ["track", "confirm", "latest", *args])
     assert res.exit_code == 0 and "confirmed" in res.output
+
+
+def test_demo_references_and_benchmark_cli(tmp_path):
+    from typer.testing import CliRunner
+
+    from pitwall.cli import app
+
+    runner = CliRunner(env={"COLUMNS": "200", "PITWALL_DATA_DIR": str(tmp_path)})
+    r = runner.invoke(app, ["demo"])
+    assert r.exit_code == 0, r.output
+    assert "synthetic reference laps" in r.output
+    listing = runner.invoke(app, ["ref", "list"])
+    assert "synthetic-2025-synthetic-grand-prix-qualifying-pro-l2" in listing.output
+    events = runner.invoke(app, ["ref", "events", "--synthetic"])
+    assert events.exit_code == 0 and "Synthetic Grand Prix" in events.output
+    laps = runner.invoke(app, ["ref", "laps", "synthetic", "--synthetic"])
+    assert laps.exit_code == 0 and "FST" in laps.output and "PRO" in laps.output
+    one = runner.invoke(app, ["ref", "laps", "synthetic", "--synthetic", "--driver", "PRO"])
+    assert "deleted" in one.output and "out lap" in one.output
+    fetched = runner.invoke(app, ["ref", "fetch", "synthetic", "FST", "--synthetic"])
+    assert fetched.exit_code == 0 and "Stored" in fetched.output
+    bench = runner.invoke(app, ["benchmark", "latest", "--lap", "1", "--driver", "PRO"])
+    assert bench.exit_code == 0, bench.output
+    assert "Brakes earlier than PRO" in bench.output and "Not assessed" in bench.output
+    none = runner.invoke(app, ["benchmark", "latest", "--lap", "1"])
+    assert none.exit_code == 1
+    wrong = runner.invoke(app, ["benchmark", "latest", "--lap", "1", "--ref", "nope"])
+    assert wrong.exit_code == 1 and "Cannot benchmark" in wrong.output

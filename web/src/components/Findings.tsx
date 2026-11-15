@@ -7,13 +7,15 @@ export function Findings(props: {
   findings: Finding[];
   onShow: (f: Finding) => void;
   selected: string | null;
+  emptyNote?: string;
+  footNote?: string;
 }) {
-  const { findings, onShow, selected } = props;
+  const { findings, onShow, selected, emptyNote, footNote } = props;
   if (findings.length === 0) {
     return (
       <p className="note">
-        No findings: no measured difference above the thresholds. Either this lap matches the reference corner by
-        corner, or the differences are within measurement resolution.
+        {emptyNote ??
+          "No findings: no measured difference above the thresholds. Either this lap matches the reference corner by corner, or the differences are within measurement resolution."}
       </p>
     );
   }
@@ -25,6 +27,7 @@ export function Findings(props: {
             <div className="finding-head">
               <span className="corner-tag">{f.segment_name}</span>
               <strong>{f.title}</strong>
+              {f.basis === "pro_normalised" && <span className="corner-tag">vs real F1 · normalised</span>}
               <span className={`badge ${f.confidence}`}>{f.confidence}</span>
             </div>
             <div className="finding-impact">
@@ -46,8 +49,8 @@ export function Findings(props: {
         ))}
       </ol>
       <p className="note">
-        Measured against the reference lap. Impacts of findings in the same corner can overlap, so don't add them up;
-        the corner table shows each corner's total.
+        {footNote ?? "Measured against the reference lap."} Impacts of findings in the same corner can overlap, so
+        don't add them up; the corner table shows each corner's total.
       </p>
     </>
   );

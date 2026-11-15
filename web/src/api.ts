@@ -84,6 +84,9 @@ export type Comparison = {
   };
 };
 
+/** What the charts and the track map need: one lap and a reference on one distance axis. */
+export type TraceView = { session: Session; trace: Comparison["trace"] };
+
 export type SegmentDef = {
   id: string;
   name: string;
@@ -155,6 +158,7 @@ export type Finding = {
   measured: Record<string, number | string | null>;
   evidence: { start_m: number; end_m: number };
   suggestion: string | null;
+  basis?: "self" | "pro_normalised";
 };
 
 export type Consistency = {
@@ -175,6 +179,139 @@ export type Consistency = {
     inconsistent: boolean;
     times_s: number[];
   }[];
+};
+
+// ---------------------------------------------------------------- real-F1 references
+
+export type Capabilities = {
+  brake: "binary" | "pressure";
+  steering: boolean;
+  wheel_slip: boolean;
+  car_interval_s: number;
+  car_max_gap_s: number;
+  pos_interval_s: number;
+  pos_max_gap_s: number;
+  car_samples: number;
+  pos_samples: number;
+};
+
+export type RefSummary = {
+  key: string;
+  provider: string;
+  synthetic: boolean;
+  season: number;
+  event: string;
+  session: string;
+  session_part: string | null;
+  driver: string;
+  driver_number: string | null;
+  driver_name: string | null;
+  team: string | null;
+  lap_number: number;
+  lap_time_ms: number;
+  sectors_ms: (number | null)[];
+  compound: string | null;
+  tyre_life: number | null;
+  track_status: string | null;
+  capabilities: Capabilities;
+  checks: { notes?: string[] } & Record<string, unknown>;
+  fetched_utc: string;
+  current: boolean;
+};
+
+export type RefOptions = {
+  stored: RefSummary[];
+  season: number | null;
+  event: string | null;
+  synthetic?: boolean;
+  sessions?: string[];
+  error: string | null;
+};
+
+export type RefDriver = {
+  driver: string;
+  team: string | null;
+  lap_number: number;
+  lap_time_ms: number | null;
+  session_part: string | null;
+};
+
+export type Confidence = "high" | "medium" | "within uncertainty" | "n/a";
+
+export type MetricCompare = {
+  key: string;
+  label: string;
+  unit: "m" | "km/h";
+  lap: number | null;
+  ref: number | null;
+  ref_raw: number | null;
+  ref_sigma: number | null;
+  delta: number | null;
+  offset: number | null;
+  normalised: number | null;
+  sigma: number | null;
+  z: number | null;
+  confidence: Confidence;
+  note: string | null;
+};
+
+export type SegmentBench = {
+  segment: SegmentDef;
+  lap_time_s: number;
+  ref_time_s: number;
+  loss_s: number;
+  loss_sigma_s: number;
+  expected_s: number | null;
+  normalised_s: number | null;
+  normalised_sigma_s: number | null;
+  z: number | null;
+  confidence: Confidence;
+  metrics: Record<string, MetricCompare>;
+  ref_notes: string[];
+};
+
+export type Registration = {
+  reflected: boolean;
+  rotation_deg: number;
+  scale: number;
+  rms_m: number;
+  median_m: number;
+  p95_m: number;
+  max_m: number;
+  start_offset_m: number;
+  length_ratio: number;
+  points: number;
+  quality: "good" | "check" | "poor";
+  notes: string[];
+  along_sigma_m: number;
+};
+
+export type BenchmarkData = {
+  session: Session;
+  lap: Lap & { metrics: Metrics; max_gap_m: number };
+  reference: RefSummary & {
+    label: string;
+    trace_time_s: number;
+    official_sectors_ms: (number | null)[];
+    sectors_on_your_lines_s: number[] | null;
+    sources: { url?: string; sha256?: string; fetched_utc?: string }[];
+  };
+  delta_s: number;
+  sectors: Sector[];
+  largest_losses: Window[];
+  largest_gains: Window[];
+  registration: Registration;
+  systematic: {
+    time: Record<string, { segments: number; pace_ratio: number | null; pace_pct?: number }>;
+    metrics: Record<string, { offset: number | null; unit: "m" | "%"; corners: number }>;
+  };
+  segments: SegmentBench[];
+  findings: Finding[];
+  strengths: { segment_id: string; segment_name: string; normalised_s: number; sigma_s: number }[];
+  not_assessed: string[];
+  metric_labels: Record<string, { label: string; unit: string }>;
+  track_model: TrackModel;
+  trace: Comparison["trace"] & { ref_x: Series; ref_z: Series; ref_sample_m: number[] };
 };
 
 export type LiveStatus = {
@@ -230,4 +367,13 @@ export const api = {
   consistency: (session: string) => get<Consistency>("consistency", { session }),
   confirmTrack: (key: string) =>
     get<TrackModel>(`tracks/${encodeURIComponent(key)}/confirm`, {}, { method: "POST" }),
+  references: (session: string) => get<RefOptions>("references", { session }),
+  referenceDrivers: (session: string, ref_session: string) =>
+    get<{ season: number; event: string; session: string; drivers: RefDriver[] }>("references/drivers", {
+      session,
+      ref_session,
+    }),
+  fetchReference: (p: { session: string; driver: string; ref_session: string; part?: string }) =>
+    get<RefSummary>("references/fetch", p, { method: "POST" }),
+  benchmark: (p: { session: string; lap: number; ref: string }) => get<BenchmarkData>("benchmark", p),
 };

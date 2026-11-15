@@ -14,3 +14,10 @@ rotate_mb = 256           # ...or at this size, whichever comes first
 compress = true           # compress closed segments (lossless, verified)
 status_interval_s = 5.0
 expected_hz = 60          # the PS5 "UDP Send Rate"; used by the health checks
+
+[reference]
+# Where real F1 reference laps are downloaded from ({season} is replaced, e.g. 2025).
+# Default: the TracingInsights archive of FastF1 data on GitHub; change to use a mirror.
+base_url = "https://raw.githubusercontent.com/TracingInsights/{season}/main/"
+schedule_url = "https://raw.githubusercontent.com/theOehrly/f1schedule/master/schedule_{season}.json"
+timeout_s = 30.0

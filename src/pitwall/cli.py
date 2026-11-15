@@ -31,6 +31,10 @@ track_app = typer.Typer(
     no_args_is_help=True, help="Track models: corners and straights of a circuit."
 )
 app.add_typer(track_app, name="track")
+ref_app = typer.Typer(
+    no_args_is_help=True, help="Real Formula 1 reference laps (2025 season, F1 25 base cars)."
+)
+app.add_typer(ref_app, name="ref")
 
 console = Console()
 
@@ -744,18 +748,27 @@ def demo(
 ) -> None:
     """Create a clearly labelled synthetic demo session, to explore the app without the PS5."""
     from pitwall.ingest.pipeline import ingest_capture
-    from pitwall.synth.demo import write_demo_capture
+    from pitwall.synth.demo import write_demo_capture, write_demo_references
 
     cfg = _load(config, data_dir)
     path = write_demo_capture(cfg.raw_dir)
-    res = ingest_capture(path, cfg.data_dir, _db(cfg))
+    conn = _db(cfg)
+    res = ingest_capture(path, cfg.data_dir, conn)
     s = res.sessions[0].summary
     console.print(
         f"Created [bold]{res.capture_id}[/]: {s['lap_count']} synthetic laps "
         f"(session …{s['session_uid'][-8:]}). It is marked as synthetic everywhere and never "
         "counts as your own lap."
     )
-    console.print("Try: [bold]uv run pitwall laps latest[/]  or  [bold]uv run pitwall serve[/]")
+    keys = write_demo_references(cfg.data_dir, conn)
+    console.print(
+        f"Stored {len(keys)} synthetic reference laps (drivers PRO and FST) for the Driver "
+        "Benchmark; they stand in for real F1 data and are only compared with synthetic laps."
+    )
+    console.print(
+        "Try: [bold]uv run pitwall laps latest[/], [bold]uv run pitwall benchmark latest "
+        "--lap 1 --driver PRO[/]  or  [bold]uv run pitwall serve[/]"
+    )
 
 
 @app.command()
@@ -781,7 +794,7 @@ def serve(
 
     cfg = _load(config, data_dir)
     live = None if no_live else LiveStatus("127.0.0.1", live_port)
-    application = create_app(cfg.data_dir, live)
+    application = create_app(cfg.data_dir, live, cfg.reference)
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}"
     console.print(f"[bold green]Pitwall[/] running at {url}  (Ctrl+C to stop)")
     if not (STATIC_DIR / "index.html").exists():
@@ -1085,6 +1098,389 @@ def track_rename(
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(1) from None
     console.print(f"Renamed {segment} in {m.key} (v{m.version}).")
+
+
+# ------------------------------------------------------------- real-F1 references
+
+
+SeasonOpt = Annotated[int, typer.Option(help="Season; F1 25 base cars are 2025 cars")]
+SyntheticOpt = Annotated[
+    bool, typer.Option("--synthetic", help="Use the demo's synthetic archive (not real data)")
+]
+
+
+def _archive(cfg: Config, season: int, synthetic: bool):
+    from pitwall.reference.service import make_archive
+
+    if synthetic:
+        return make_archive(cfg.data_dir, season, synthetic=True)
+    r = cfg.reference
+    return make_archive(
+        cfg.data_dir,
+        season,
+        base_url=r.base_url,
+        schedule_url=r.schedule_url,
+        timeout_s=r.timeout_s,
+    )
+
+
+def _ref_fail(exc: Exception) -> typer.Exit:
+    console.print(f"[red]{exc}[/]")
+    return typer.Exit(1)
+
+
+@ref_app.command("events")
+def ref_events(
+    season: SeasonOpt = 2025,
+    synthetic: SyntheticOpt = False,
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """List the season's events and sessions (FastF1's calendar)."""
+    from pitwall.reference.archive import FetchError
+
+    cfg = _load(config, data_dir)
+    try:
+        events = _archive(cfg, season, synthetic).events()
+    except FetchError as exc:
+        raise _ref_fail(exc) from None
+    t = Table(title=f"{season} events")
+    for col in ("round", "event", "location", "date", "sessions"):
+        t.add_column(col)
+    for e in events:
+        t.add_row(str(e.round), e.name, e.location, e.date or "", ", ".join(e.sessions))
+    console.print(t)
+
+
+@ref_app.command("laps")
+def ref_laps(
+    event: Annotated[str, typer.Argument(help="Event, e.g. 'Italian Grand Prix' or 'monza'")],
+    session: Annotated[str, typer.Option(help="Qualifying, Race, Sprint, ...")] = "Qualifying",
+    driver: Annotated[str | None, typer.Option(help="All laps of one driver (e.g. VER)")] = None,
+    part: Annotated[str | None, typer.Option(help="Only Q1, Q2 or Q3")] = None,
+    season: SeasonOpt = 2025,
+    synthetic: SyntheticOpt = False,
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Each driver's fastest valid lap of a session, or all laps of one driver."""
+    from pitwall.reference.archive import FetchError
+    from pitwall.reference.laps import ReferenceDataError, classification, parse_lap_rows
+
+    cfg = _load(config, data_dir)
+    ar = _archive(cfg, season, synthetic)
+    try:
+        ev = ar.find_event(event)
+        if driver:
+            code = driver.upper()
+            rows = parse_lap_rows(ar.driver_laptimes(ev.name, session, code), code)
+            t = Table(title=f"{code} · {season} {ev.name} {session}")
+            for col in ("lap", "time", "S1", "S2", "S3", "part", "tyre", "can be a reference"):
+                t.add_column(col)
+            for r in rows:
+                t.add_row(
+                    str(r.lap_number),
+                    _fmt_ms(r.lap_time_ms),
+                    *(_fmt_ms(x) for x in r.sectors_ms),
+                    r.session_part or "",
+                    f"{r.compound or ''} {r.tyre_life or ''}".strip(),
+                    "[green]yes[/]" if r.usable else f"[dim]no: {', '.join(r.issues)}[/]",
+                )
+            console.print(t)
+            return
+        rows = classification(parse_lap_rows(ar.session_laptimes(ev.name, session)), part)
+    except (FetchError, ReferenceDataError, LookupError) as exc:
+        raise _ref_fail(exc) from None
+    t = Table(title=f"{season} {ev.name} {session}: fastest valid lap per driver")
+    for col in ("#", "driver", "team", "lap", "time", "gap", "part"):
+        t.add_column(col)
+    best = rows[0].lap_time_ms if rows else None
+    for i, r in enumerate(rows, 1):
+        gap = (
+            "" if best is None or r.lap_time_ms is None else f"+{(r.lap_time_ms - best) / 1000:.3f}"
+        )
+        t.add_row(
+            str(i),
+            r.driver,
+            r.team or "",
+            str(r.lap_number),
+            _fmt_ms(r.lap_time_ms),
+            gap if i > 1 else "",
+            r.session_part or "",
+        )
+    console.print(t)
+    console.print(
+        "[dim]Valid = not deleted, timing accurate, timed (not filled in) and not an out or in "
+        "lap. Store one with `pitwall ref fetch`.[/]"
+    )
+
+
+def _print_ref(ref: Any) -> None:
+    caps = ref.capabilities
+    console.print(
+        f"[bold]{ref.key}[/]\n  {ref.label} · {_fmt_ms(ref.lap_time_ms)} "
+        f"(S1 {_fmt_ms(ref.sectors_ms[0])}, S2 {_fmt_ms(ref.sectors_ms[1])}, "
+        f"S3 {_fmt_ms(ref.sectors_ms[2])}) · {ref.team or ''} · {ref.compound or ''}"
+    )
+    console.print(
+        f"  Data: {caps.car_samples} car samples (median {caps.car_interval_s:.2f} s apart, "
+        f"longest gap {caps.car_max_gap_s:.2f} s), {caps.pos_samples} positions; brake on/off; "
+        "no steering or wheel slip."
+    )
+    for note in ref.checks.get("notes", []):
+        console.print(f"  [yellow]{note}[/]")
+    for src in ref.sources:
+        console.print(f"  [dim]{src.get('url')}  sha256 {str(src.get('sha256', ''))[:12]}…[/]")
+
+
+@ref_app.command("fetch")
+def ref_fetch(
+    event: Annotated[str, typer.Argument(help="Event, e.g. 'Italian Grand Prix' or 'monza'")],
+    driver: Annotated[str, typer.Argument(help="Driver code, e.g. VER")],
+    session: Annotated[str, typer.Option(help="Qualifying, Race, Sprint, ...")] = "Qualifying",
+    lap: Annotated[int | None, typer.Option(help="A specific lap (default: fastest valid)")] = None,
+    part: Annotated[str | None, typer.Option(help="Fastest lap within Q1, Q2 or Q3")] = None,
+    season: SeasonOpt = 2025,
+    synthetic: SyntheticOpt = False,
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Download, check and store a reference lap (kept offline afterwards)."""
+    from pitwall.reference.archive import FetchError
+    from pitwall.reference.laps import ReferenceDataError
+    from pitwall.reference.service import fetch_reference
+
+    cfg = _load(config, data_dir)
+    ar = _archive(cfg, season, synthetic)
+    try:
+        ev = ar.find_event(event)
+        ref = fetch_reference(
+            _db(cfg), cfg.data_dir, ar, ev.name, session, driver, lap=lap, part=part
+        )
+    except (FetchError, ReferenceDataError, LookupError) as exc:
+        raise _ref_fail(exc) from None
+    console.print("[green]Stored[/] (lap time checked against the official timing):")
+    _print_ref(ref)
+
+
+@ref_app.command("list")
+def ref_list(config: ConfigOpt = None, data_dir: DataDirOpt = None) -> None:
+    """Reference laps stored on this machine."""
+    from pitwall.storage import db
+
+    cfg = _load(config, data_dir)
+    rows = db.list_ref_laps(_db(cfg))
+    if not rows:
+        console.print("No reference laps yet: `pitwall ref fetch monza VER` stores one.")
+        return
+    t = Table()
+    for col in ("key", "driver", "event", "session", "lap", "time", "data"):
+        t.add_column(col)
+    for r in rows:
+        t.add_row(
+            r["ref_key"],
+            r["driver"],
+            f"{r['season']} {r['event']}",
+            f"{r['session']} {r['session_part'] or ''}".strip(),
+            str(r["lap_number"]),
+            _fmt_ms(r["lap_time_ms"]),
+            "synthetic" if r["synthetic"] else r["provider"],
+        )
+    console.print(t)
+
+
+def _pick_reference(
+    conn: Any, cfg: Config, s: dict[str, Any], driver: str, session: str, part: str | None
+) -> str:
+    """A stored reference of ``driver`` for the session's event, fetched when missing."""
+    from pitwall.reference.archive import FetchError
+    from pitwall.reference.laps import ReferenceDataError
+    from pitwall.reference.service import event_for, fetch_reference, season_for
+    from pitwall.storage import db
+
+    season, event = season_for(s), event_for(s)
+    synthetic = bool(s.get("synthetic"))
+    code = driver.upper()
+    stored = [
+        r
+        for r in db.list_ref_laps(conn, synthetic=synthetic)
+        if r["season"] == season
+        and r["event"] == event
+        and r["session"] == session
+        and r["driver"] == code
+        and (part is None or r["session_part"] == part)
+    ]
+    if stored:
+        return min(stored, key=lambda r: r["lap_time_ms"])["ref_key"]
+    try:
+        ref = fetch_reference(
+            conn, cfg.data_dir, _archive(cfg, season, synthetic), event, session, code, part=part
+        )
+    except (FetchError, ReferenceDataError, LookupError) as exc:
+        raise _ref_fail(exc) from None
+    console.print(f"Fetched and stored {ref.label}.")
+    return ref.key
+
+
+@app.command("benchmark")
+def benchmark_cmd(
+    session: Annotated[str, typer.Argument(help="Session id (or unique part), or 'latest'")],
+    lap: Annotated[int, typer.Option(help="Lap index (# in `pitwall laps`)")],
+    ref: Annotated[
+        str | None, typer.Option(help="Stored reference key (`pitwall ref list`)")
+    ] = None,
+    driver: Annotated[
+        str | None,
+        typer.Option(help="Or a driver code: their fastest valid lap (fetched if needed)"),
+    ] = None,
+    ref_session: Annotated[str, typer.Option(help="Reference session")] = "Qualifying",
+    part: Annotated[str | None, typer.Option(help="Q1, Q2 or Q3")] = None,
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Benchmark a lap against a real F1 lap: measured, then physics-normalised, per corner."""
+    from pitwall.analysis.benchmark import benchmark, place_reference
+    from pitwall.analysis.trace import NotComparableError, load_trace
+    from pitwall.reference.service import check_pairing, load_reference
+    from pitwall.storage import db
+    from pitwall.track.service import model_for_session
+
+    cfg = _load(config, data_dir)
+    conn = _db(cfg)
+    s = dict(_pick_session(conn, session))
+    lap_row = db.get_lap(conn, s["session_key"], lap)
+    if lap_row is None:
+        console.print(f"[red]No lap #{lap} in this session.[/]")
+        raise typer.Exit(1)
+    if ref is None and driver is None:
+        console.print(
+            "[red]Choose a reference: --driver VER (or --ref KEY, see `pitwall ref list`).[/]"
+        )
+        raise typer.Exit(1)
+    try:
+        key = ref or _pick_reference(conn, cfg, s, driver or "", ref_session, part)
+        reference = load_reference(conn, cfg.data_dir, key)
+        check_pairing(s, reference)
+        trace = load_trace(cfg.data_dir, s, dict(lap_row))
+        model = model_for_session(conn, cfg.data_dir, s)
+        b = benchmark(trace, place_reference(reference, trace), model)
+    except (NotComparableError, LookupError) as exc:
+        console.print(f"[red]Cannot benchmark: {exc}[/]")
+        raise typer.Exit(1) from None
+
+    reg = b.placed.placement.registration
+    delta = trace.lap_time_s - reference.lap_time_s
+    mine = f"lap {lap_row['lap_number']} {_fmt_ms(lap_row['lap_time_ms'])}"
+    console.print(
+        f"[bold]{s['track_name']}[/] · {mine} vs {reference.label} "
+        f"{_fmt_ms(reference.lap_time_ms)}  →  {_signed(delta)} s"
+    )
+    quality = {"good": "[green]good[/]", "check": "[yellow]check[/]"}.get(reg.quality, reg.quality)
+    console.print(
+        f"Placed on your track: {quality} (positions {reg.median_m:.1f} m from your line, "
+        f"scale {reg.scale:.3f}, start line {reg.start_offset_m:+.1f} m)"
+    )
+    for note in reg.notes:
+        console.print(f"  [yellow]{note}[/]")
+    caps = reference.capabilities
+    console.print(
+        f"[dim]Reference data: about every {caps.car_interval_s:.2f} s (gaps up to "
+        f"{caps.car_max_gap_s:.2f} s), brake on/off, no steering or wheel slip.[/]"
+    )
+    tm = b.systematic["time"]
+    mm = b.systematic["metrics"]
+    parts = []
+    for group, label in (("braking_corners", "braking corners"), ("straights", "straights")):
+        if tm[group].get("pace_pct") is not None:
+            parts.append(f"{label} {tm[group]['pace_pct']:+.2f} %")
+    if mm["brake_onset_m"]["offset"] is not None:
+        off = mm["brake_onset_m"]["offset"]
+        parts.append(f"brake points {abs(off):.0f} m {'earlier' if off < 0 else 'later'}")
+    if mm["min_speed_kmh"]["offset"] is not None:
+        parts.append(f"minimum speeds {mm['min_speed_kmh']['offset']:+.1f} %")
+    console.print("Systematic (game vs real car, median over the lap): " + ", ".join(parts))
+
+    t = Table(title="Corners: measured, then normalised (± 1 sd; confidence of the difference)")
+    for col in (
+        "segment",
+        "time Δ",
+        "systematic",
+        "normalised",
+        "brake point",
+        "min speed",
+        "throttle",
+        "exit",
+    ):
+        t.add_column(col)
+
+    def metric(r: Any, key: str, unit: str) -> str:
+        m = r.metrics.get(key)
+        if m is None or m.delta is None:
+            return "-"
+        norm = "" if m.normalised is None else f" → {m.normalised:+.0f}"
+        badge = "" if m.confidence in ("n/a", "within uncertainty") else f" [bold]{m.confidence}[/]"
+        return f"{m.delta:+.0f}{norm} ±{m.sigma:.0f} {unit}{badge}"
+
+    for r in b.segments:
+        seg = r.segment
+        norm = (
+            "-"
+            if r.normalised_s is None
+            else f"{_signed(r.normalised_s)} ±{r.normalised_sigma_s:.3f}"
+        )
+        if not seg.is_corner:
+            t.add_row(
+                f"[dim]{seg.name}[/]",
+                _signed(r.loss_s),
+                _signed(r.expected_s),
+                norm,
+                "",
+                "",
+                "",
+                "",
+            )
+            continue
+        throttle = r.metrics.get("full_throttle_m")
+        t.add_row(
+            f"[bold]{seg.name}[/]",
+            _signed(r.loss_s),
+            _signed(r.expected_s),
+            norm + ("" if r.confidence in ("n/a", "within uncertainty") else f" {r.confidence}"),
+            metric(r, "brake_onset_m", "m"),
+            metric(r, "min_speed_kmh", "km/h"),
+            metric(
+                r,
+                "full_throttle_m"
+                if throttle and throttle.delta is not None
+                else "throttle_pickup_m",
+                "m",
+            ),
+            metric(r, "exit_speed_kmh", "km/h"),
+        )
+    console.print(t)
+    console.print(
+        "[dim]Brake point and throttle: + = later than the reference; speeds: + = faster. "
+        "Normalised = after the systematic difference. 'high' / 'medium' = the difference is "
+        "more than 3 / 2 standard deviations of its uncertainty.[/]"
+    )
+    if b.findings:
+        console.print(
+            "[bold]Findings vs the reference[/] (normalised; impacts in one corner can overlap):"
+        )
+        for i, f in enumerate(b.findings, 1):
+            console.print(
+                f" {i}. [bold]{f.segment_name}[/] · {f.title} · {_signed(f.time_impact_s)} s · "
+                f"{f.confidence} confidence"
+            )
+            console.print(f"    {f.detail}")
+            if f.suggestion:
+                console.print(f"    [cyan]Try:[/] {f.suggestion}")
+    else:
+        console.print(
+            "No findings: no corner differs from your systematic offset by more than its "
+            "threshold and uncertainty."
+        )
+    console.print("[dim]Not assessed against real F1 data: " + "; ".join(b.not_assessed) + ".[/]")
 
 
 if __name__ == "__main__":

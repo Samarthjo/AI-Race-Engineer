@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import uPlot from "uplot";
-import type { Comparison, Series } from "../api";
+import type { Series, TraceView } from "../api";
 
 /** Synchronised telemetry charts on one distance axis (small multiples, one y-axis each).
  *  Blue = this lap, orange = reference. Crosshair and zoom (drag) are shared by all charts. */
@@ -9,8 +9,8 @@ type Spec = {
   key: string;
   title: string;
   height: number;
-  lap: (c: Comparison) => Series;
-  ref?: (c: Comparison) => Series;
+  lap: (c: TraceView) => Series;
+  ref?: (c: TraceView) => Series;
   range?: [number, number];
   stepped?: boolean;
   delta?: boolean;
@@ -84,7 +84,7 @@ export type ChartsHandle = {
 };
 
 type Props = {
-  data: Comparison;
+  data: TraceView;
   theme: string;
   onHover: (i: number | null) => void;
 };

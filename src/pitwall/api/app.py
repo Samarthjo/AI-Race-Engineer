@@ -19,6 +19,8 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 
 from pitwall import __version__
+from pitwall.analysis.benchmark import METRICS as BENCHMARK_METRICS
+from pitwall.analysis.benchmark import Benchmark, benchmark, place_reference
 from pitwall.analysis.compare import REFERENCE_KINDS, Comparison, compare, resolve_reference
 from pitwall.analysis.consistency import session_consistency
 from pitwall.analysis.corners import DEFINITIONS as CORNER_DEFINITIONS
@@ -27,7 +29,20 @@ from pitwall.analysis.findings import lap_findings
 from pitwall.analysis.metrics import DEFINITIONS, load_lap_metrics
 from pitwall.analysis.trace import NotComparableError, check_comparable, load_trace
 from pitwall.api.live import LiveStatus
+from pitwall.config import ReferenceConfig
 from pitwall.ingest.pipeline import DB_NAME
+from pitwall.reference.archive import Archive, FetchError
+from pitwall.reference.laps import ReferenceDataError, classification, parse_lap_rows
+from pitwall.reference.service import (
+    DEFAULT_SESSION,
+    check_pairing,
+    event_for,
+    fetch_reference,
+    load_reference,
+    make_archive,
+    season_for,
+)
+from pitwall.reference.store import ref_lap_summary
 from pitwall.storage import db
 from pitwall.track.model import TrackModel, confirm_model, list_models
 from pitwall.track.service import model_for_session
@@ -176,8 +191,85 @@ def model_payload(m: TrackModel) -> dict[str, Any]:
     }
 
 
-def create_app(data_dir: Path, live: LiveStatus | None = None) -> FastAPI:
+def benchmark_payload(
+    b: Benchmark,
+    session: dict[str, Any],
+    lap: dict[str, Any],
+    lap_metrics: dict[str, Any],
+    model: TrackModel,
+    step_m: float,
+) -> dict[str, Any]:
+    """Comparison payload (same shape as /api/compare, so the charts and map are shared)
+    plus the reference's provenance, the registration, and the normalised corner table."""
+    payload = comparison_payload(b.comparison, session, lap, lap_metrics, None, step_m)
+    ref = b.placed.ref
+    reg = b.placed.placement.registration
+    payload["reference"] = {
+        **payload["reference"],
+        "key": ref.key,
+        "provider": ref.provider,
+        "synthetic": ref.synthetic,
+        "season": ref.season,
+        "event": ref.event,
+        "session": ref.session,
+        "session_part": ref.session_part,
+        "driver": ref.driver,
+        "driver_name": ref.driver_name,
+        "driver_number": ref.driver_number,
+        "team": ref.team,
+        "lap_number": ref.lap_number,
+        "official_sectors_ms": list(ref.sectors_ms),
+        "sectors_on_your_lines_s": b.ref_sector_times(),
+        "compound": ref.compound,
+        "tyre_life": ref.tyre_life,
+        "track_status": ref.track_status,
+        "capabilities": ref.capabilities.to_dict(),
+        "checks": ref.checks,
+        "fetched_utc": ref.fetched_utc,
+        "sources": [
+            {k: v for k, v in src.items() if k in ("url", "sha256", "fetched_utc")}
+            for src in ref.sources
+        ],
+    }
+    dist = b.comparison.distance
+    base_step = float(dist[1] - dist[0]) if len(dist) > 1 else 1.0
+    every = max(1, round(step_m / base_step))
+    take = np.arange(0, len(dist), every)
+    if take[-1] != len(dist) - 1:
+        take = np.append(take, len(dist) - 1)
+    ch = b.placed.reference.channels
+    payload["trace"]["ref_x"] = _arr(ch["x"], 2, take)
+    payload["trace"]["ref_z"] = _arr(ch["z"], 2, take)
+    payload["trace"]["ref_sample_m"] = [round(float(v), 1) for v in b.placed.samples.d]
+    payload["registration"] = {**reg.to_dict(), "along_sigma_m": round(b.placed.along_sigma_m, 2)}
+    payload["systematic"] = b.systematic
+    payload["segments"] = [r.to_dict() for r in b.segments]
+    payload["findings"] = [f.to_dict() for f in b.findings]
+    payload["strengths"] = b.strengths
+    payload["not_assessed"] = b.not_assessed
+    payload["metric_labels"] = {
+        k: {"label": v[0], "unit": v[1]} for k, v in BENCHMARK_METRICS.items()
+    }
+    payload["track_model"] = model_payload(model)
+    return payload
+
+
+def create_app(
+    data_dir: Path, live: LiveStatus | None = None, reference: ReferenceConfig | None = None
+) -> FastAPI:
     data_dir = Path(data_dir)
+    ref_cfg = reference or ReferenceConfig()
+
+    def archive(season: int, synthetic: bool) -> Archive:
+        if synthetic:
+            return make_archive(data_dir, season, synthetic=True)
+        return make_archive(
+            data_dir,
+            season,
+            base_url=ref_cfg.base_url,
+            schedule_url=ref_cfg.schedule_url,
+            timeout_s=ref_cfg.timeout_s,
+        )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -300,6 +392,134 @@ def create_app(data_dir: Path, live: LiveStatus | None = None) -> FastAPI:
             return model_payload(confirm_model(data_dir, key))
         except (FileNotFoundError, ValueError) as exc:
             raise HTTPException(404, str(exc)) from exc
+
+    # ------------------------------------------------------------ real-F1 references
+
+    @app.get("/api/references")
+    def references(session: str | None = None) -> dict[str, Any]:
+        """Stored reference laps; with ``session``, the ones that may be compared with it,
+        and where new ones come from (season, event, sessions of the event)."""
+        with database() as conn:
+            rows = [ref_lap_summary(dict(r)) for r in db.list_ref_laps(conn)]
+            if session is None:
+                return {"stored": rows}
+            s = find_session(conn, session)
+        synthetic = bool(s.get("synthetic"))
+        try:
+            season, event = season_for(s), event_for(s)
+        except NotComparableError as exc:
+            return {"stored": [], "season": None, "event": None, "error": str(exc)}
+        matching = [
+            r
+            for r in rows
+            if r["synthetic"] == synthetic and r["season"] == season and r["event"] == event
+        ]
+        out: dict[str, Any] = {
+            "stored": matching,
+            "season": season,
+            "event": event,
+            "synthetic": synthetic,
+            "sessions": [DEFAULT_SESSION],
+            "error": None,
+        }
+        try:
+            ev = archive(season, synthetic).find_event(event)
+            out["sessions"] = list(ev.sessions) or [DEFAULT_SESSION]
+        except (FetchError, LookupError) as exc:
+            out["error"] = f"event calendar unavailable: {exc}"
+        return out
+
+    @app.get("/api/references/drivers")
+    def reference_drivers(session: str, ref_session: str = DEFAULT_SESSION) -> dict[str, Any]:
+        """Each driver's fastest lap that can be a reference, for the session's event."""
+        with database() as conn:
+            s = find_session(conn, session)
+        try:
+            season, event = season_for(s), event_for(s)
+            data = archive(season, bool(s.get("synthetic"))).session_laptimes(event, ref_session)
+            rows = classification(parse_lap_rows(data))
+        except NotComparableError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except (FetchError, ReferenceDataError) as exc:
+            raise HTTPException(502, str(exc)) from exc
+        return {
+            "season": season,
+            "event": event,
+            "session": ref_session,
+            "drivers": [
+                {
+                    "driver": r.driver,
+                    "team": r.team,
+                    "lap_number": r.lap_number,
+                    "lap_time_ms": r.lap_time_ms,
+                    "session_part": r.session_part,
+                }
+                for r in rows
+            ],
+        }
+
+    @app.post("/api/references/fetch")
+    def reference_fetch(
+        session: str,
+        driver: str,
+        ref_session: str = DEFAULT_SESSION,
+        lap: int | None = None,
+        part: str | None = None,
+    ) -> dict[str, Any]:
+        """Download (or read from the cache), check and store a reference lap for the
+        session's event: the driver's fastest valid lap unless ``lap`` is given."""
+        with database() as conn:
+            s = find_session(conn, session)
+            try:
+                season, event = season_for(s), event_for(s)
+                ref = fetch_reference(
+                    conn,
+                    data_dir,
+                    archive(season, bool(s.get("synthetic"))),
+                    event,
+                    ref_session,
+                    driver,
+                    lap=lap,
+                    part=part,
+                )
+            except NotComparableError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            except (ReferenceDataError, LookupError) as exc:
+                raise HTTPException(422, str(exc)) from exc
+            except FetchError as exc:
+                raise HTTPException(502, str(exc)) from exc
+            row = db.get_ref_lap(conn, ref.key)
+            assert row is not None
+            return ref_lap_summary(dict(row))
+
+    @app.get("/api/benchmark")
+    def benchmark_lap(
+        session: str,
+        lap: int,
+        ref: str,
+        step: float = Query(2.0, ge=1.0, le=20.0),
+    ) -> dict[str, Any]:
+        with database() as conn:
+            s = find_session(conn, session)
+            lap_row = db.get_lap(conn, session, lap)
+            if lap_row is None:
+                raise HTTPException(404, f"lap {lap} not found in session")
+            lap_d = dict(lap_row)
+            try:
+                reference_lap = load_reference(conn, data_dir, ref)
+            except LookupError as exc:
+                raise HTTPException(404, str(exc)) from exc
+            except (FetchError, ReferenceDataError) as exc:
+                raise HTTPException(502, str(exc)) from exc
+            try:
+                check_pairing(s, reference_lap)
+                trace = load_trace(data_dir, s, lap_d)
+                model = model_for_session(conn, data_dir, s)
+                result = benchmark(trace, place_reference(reference_lap, trace), model)
+            except NotComparableError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            lap_metrics = load_lap_metrics(data_dir, s, lap_d)
+        return benchmark_payload(result, s, lap_d, lap_metrics, model, step)
 
     @app.get("/api/live")
     def live_status() -> dict[str, Any]:

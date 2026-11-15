@@ -19,7 +19,8 @@ at the bottom.
 | Corner-by-corner analysis: corners detected from your laps, time lost per corner and phase | ✅ Stage 3 |
 | Findings: measured driving differences per corner, with suggestions | ✅ Stage 3 |
 | Consistency per corner and your ideal lap (best segments) | ✅ Stage 3 |
-| Comparison with real F1 drivers (FastF1) | Stage 4 |
+| Real F1 reference laps (2025 season): download once, checked, kept offline | ✅ Stage 4 |
+| Driver Benchmark: your lap against a real F1 lap, measured and physics-normalised, with uncertainty | ✅ Stage 4 |
 | Race engineer reports | Stage 5 |
 | Live telemetry screen | Stage 6 |
 | Long-term progress tracking | Stage 7 |
@@ -193,6 +194,30 @@ pill at the top right shows basic live status (track, lap, lap time, speed).
 
 You can run `serve` and `capture run` at the same time, in two Terminal windows.
 
+### Step 8: benchmark against a real F1 driver
+
+Store a real reference lap once (it needs the internet only this one time):
+
+```bash
+uv run pitwall ref laps monza
+```
+
+```bash
+uv run pitwall ref fetch monza VER
+```
+
+The first lists every driver's fastest valid lap of the 2025 Italian Grand Prix qualifying;
+the second downloads Max Verstappen's (his pole lap, 1:18.792), checks it and keeps it on the
+Mac. Then open **Driver Benchmark** in the web app, or in the terminal:
+
+```bash
+uv run pitwall benchmark latest --lap 4 --driver VER
+```
+
+The page and the results are explained in [3.6](#36-the-driver-benchmark-page). In the app,
+**Add a reference…** does the same as `pitwall ref fetch`, for the track of the session you
+picked.
+
 ### No PS5 nearby? Try the demo
 
 ```bash
@@ -205,6 +230,12 @@ throttle out of T4, softer braking, a front lock-up, rear wheelspin, an invalid 
 flashback lap. It is labelled "synthetic" everywhere: in `pitwall sessions`, in the app
 (yellow banner), and it never counts towards your personal bests. It is useful to learn the
 screens, and to see every type of finding, before you have real laps.
+
+The demo also stores two **synthetic reference laps** for the Driver Benchmark, standing in
+for real F1 data (recorded the way real F1 data is: about 4 samples a second, on/off brake,
+a different coordinate frame): **PRO** drives the same car as the demo laps, **FST** a faster
+car. They are only ever compared with synthetic laps. Try
+`uv run pitwall benchmark latest --lap 1 --driver PRO`.
 
 ---
 
@@ -390,6 +421,93 @@ You can also edit the JSON file directly, e.g. to move a boundary (`start_m` / `
 metres from the line). Segments must cover the whole lap without gaps, and `pitwall track
 show` reports any problem. Each change increases the model's version.
 
+### 3.6 The Driver Benchmark page
+
+The **Driver Benchmark** page puts a real Formula 1 lap on your track and compares it with
+your lap, corner by corner. Read it as *directional*: the comparison with your own laps
+(Lap Analysis) remains the more precise one.
+
+**Where the real data comes from.** Formula 1's own timing archive (which FastF1 reads) has
+required an F1 TV login since October 2026. Pitwall reads the same data, as processed by
+FastF1, from the public **TracingInsights archive** on GitHub (one repository per season).
+Each file is downloaded once, stored unchanged with its address and a SHA-256 checksum, and
+read from the Mac afterwards, offline. Only the 2025 season is allowed: F1 25 models the 2025
+cars (the "era guard"). The track must match: your Monza laps are compared with the Italian
+Grand Prix.
+
+**Which lap.** By default each driver's fastest *valid* lap: not deleted by the stewards,
+timing marked accurate, really timed (not filled in) and not an out or in lap. The lap time
+from the telemetry must equal the official one, or the lap is refused.
+
+**What real F1 data can and cannot show.** About four samples a second (a median 0.24 s
+apart, about 20 m at 300 km/h, with occasional gaps up to about 1 s), whole km/h, throttle in
+whole percent, and the brake only as on/off. There is no steering and no wheel slip. So brake
+pressure, release and trail braking, steering, lock-ups, wheelspin, coasting and throttle
+hesitation are **not compared**; the page lists them under *About the reference data*.
+
+**How the lap is placed on your track.** The real positions are in the circuit's own
+coordinates; your lap gives the game's. Pitwall finds the rotation, scale and shift that fit
+one onto the other, then gives every real sample a distance on your lap. The *Placed on your
+track* tile shows how well: the median distance of the real positions from your line, and
+the real start line's distance from yours. A dashed orange line on the map shows the real
+lap on your track. A poor fit is refused; a doubtful one shows a yellow banner.
+
+**Summary tiles.** Your lap, the reference (driver, team, event, session and Q1/Q2/Q3), the
+delta at the line, the systematic pace difference (see below) and the placement quality.
+
+**Charts and map.** As on Lap Analysis: blue is your lap, orange the reference. The
+reference's brake trace is on/off and it has no steering line. Its lines join samples about
+20 m apart, so its exact shape between two samples is unknown.
+
+**Measured, systematic, normalised.** The game car is not the real car, and the game is not
+real life. So for every value Pitwall shows:
+
+- **measured**: your value minus the reference's (time, brake point, speeds, throttle);
+- **systematic**: the median of that difference over all corners (for times: the median time
+  ratio, separately for braking corners and for straights), i.e. what is the same everywhere
+  and so most likely comes from the car and the physics;
+- **normalised**: measured minus systematic, the part that is specific to this corner, and
+  most likely to your driving.
+
+Example: if you brake 12 m before Verstappen everywhere and 30 m before him into the
+Rettifilo, the Rettifilo is 18 m earlier than your norm.
+
+**± and confidence.** Every reference value is estimated between its samples, so it has an
+uncertainty, shown as ± one standard deviation. It is **measured, not assumed**: Pitwall
+records *your own* lap the way the real F1 feed would (same sample spacing, whole km/h, on/off
+brake), many times at random sampling phases, and sees how far the estimates land from your
+exact 60 Hz values at that corner. To that it adds the spacing of the reference's own samples
+there and the uncertainty of placing it on your track. *high* / *medium* mean the difference
+is more than 3 / 2 standard deviations, so it is unlikely to come from the data's limits.
+With about thirty values per lap, an occasional *medium* can still be chance.
+
+**Findings vs a real driver.** Only when a corner loses time beyond the systematic pace
+difference (at least 0.05 s and two standard deviations) *and* a normalised value explains
+it: brakes earlier (at least 10 m), lower minimum speed (4 km/h), later on the throttle
+(12 m), or a slower exit when the data cannot tell which of those it is. Each is labelled
+*vs real F1 · normalised* and keeps the measurement separate from the suggestion. Because the
+real brake is on/off, a softer first brake application looks like an earlier brake point;
+the finding says so. Corners where you are better than your norm are listed under the
+findings.
+
+**Sectors.** Measured on your game's sector lines (the reference's times there come from
+its trace); the reference's official sector times, on the real lines, are shown below.
+
+### 3.7 Reference laps in the terminal
+
+| Command | What it does |
+|---|---|
+| `uv run pitwall ref events` | The 2025 events and their sessions |
+| `uv run pitwall ref laps monza` | Every driver's fastest valid lap of the qualifying (`--session Race`, `--part Q3`) |
+| `uv run pitwall ref laps monza --driver VER` | All of one driver's laps, and why a lap cannot be a reference |
+| `uv run pitwall ref fetch monza VER` | Downloads, checks and stores the fastest valid lap (`--lap 17` for a specific one) |
+| `uv run pitwall ref list` | Reference laps stored on this Mac |
+| `uv run pitwall benchmark latest --lap 4 --driver VER` | The benchmark in the terminal (`--ref <key>` for a stored lap) |
+
+Events can be named in full ("Italian Grand Prix") or by place ("monza"). The download
+addresses can be changed in the config file (`[reference]`, see
+[config.example.toml](config.example.toml)), for example to a mirror.
+
 ---
 
 ## 4. Command reference
@@ -412,6 +530,8 @@ show` reports any problem. Each change increases the model's version.
 | `pitwall demo` | Creates a labelled synthetic demo session |
 | `pitwall corners <session\|latest> --lap # [--ref …]` | Corner table and findings in the terminal |
 | `pitwall track list \| show \| draft \| confirm \| rename` | Manage track models (corners); see [3.5](#35-track-models) |
+| `pitwall ref events \| laps \| fetch \| list` | Real F1 reference laps; see [3.7](#37-reference-laps-in-the-terminal) |
+| `pitwall benchmark <session\|latest> --lap # --driver VER` | Your lap against a real F1 lap, in the terminal (`--ref <key>`, `--ref-session`, `--part`) |
 | `pitwall version` | Version |
 
 All commands accept `--data-dir` (or the environment variable `PITWALL_DATA_DIR`) to use a
@@ -433,7 +553,16 @@ Everything stays on the Mac, by default in `~/PitwallData`:
   sessions/<recording>/<session>/
       frames.parquet          decoded player-car telemetry, one row per frame
       session.json            session details: events, setup, history, decoding stats
+  tracks/<key>.json           track models (corners)
+  references/
+      raw/                    downloaded real-F1 files, unchanged, each with a .source.json
+                              (address, SHA-256, download time)
+      laps/<key>.parquet      reference laps: their measured samples
 ```
+
+- `references/raw/` keeps the reference data working offline. Everything in
+  `references/laps/` and in the catalogue is rebuilt from it when Pitwall's processing
+  changes. Real F1 data stays on your Mac; it is never added to the code repository.
 
 - **`raw/` is the precious part.** Back it up. Everything else can be rebuilt from it with
   `uv run pitwall ingest --force`, which happens automatically when a new Pitwall version
@@ -466,6 +595,18 @@ Everything stays on the Mac, by default in `~/PitwallData`:
 | Corners look wrong (merged, missing or split) | Re-draft from a cleaner lap: `uv run pitwall track draft latest --lap <#> --force`, or edit the JSON file (see 3.5) |
 | `Corner analysis unavailable: track model … is N m but this session's track is M m` | The game's track length changed (e.g. after a game update). Re-draft with the command shown in the message |
 | "No findings" | The lap matches the reference corner by corner within the thresholds, or the differences are too small to be measured reliably |
+| `cannot reach raw.githubusercontent.com` (or a timeout) while fetching a reference | The Mac needs the internet once per reference lap. Check the connection; a VPN, firewall or proxy may block GitHub's file server. A mirror can be set in the config file (`[reference] base_url`) |
+| `refused the request (HTTP 403)` | A proxy or network policy blocks the archive; try another network or a mirror |
+| `not in the archive (HTTP 404)` | That event, session, driver or lap does not exist in the archive (check the names with `pitwall ref events` and `pitwall ref laps`) |
+| `lap N cannot be a reference: deleted / out lap / …` | Pick another lap, or leave out `--lap` to get the fastest valid one |
+| `telemetry ends at … but the official lap time is …` | The archive's telemetry does not match the official timing for that lap; Pitwall refuses it rather than compare a wrong lap |
+| `Cannot benchmark: no real-F1 season is defined for UDP format …` | Set UDP Format to F1 25 (2025) in the game; the 2026 Season Pack format is not supported yet |
+| `… has no real-F1 reference (reverse or unknown layout)` | Reverse layouts don't exist in real F1 |
+| `the reference is from the …, but this lap is at …` | Choose a reference from the event of your track |
+| `synthetic laps are only compared with synthetic references` | Demo laps use the demo's synthetic references (PRO, FST); real laps use real references |
+| `cannot place the reference on your track: …` | The real lap does not fit your lap's path (wrong track or layout, or a lap with an off). Try another of your laps |
+| Yellow banner "check it on the map" on Driver Benchmark | The fit is usable but not perfect (e.g. the start lines are far apart); compare the dashed orange line with your path on the map |
+| Why not FastF1 directly? | Since October 2026 Formula 1's timing archive answers "401 Unauthorized" without an F1 TV login, for FastF1 too. Using it with your login is a possible later addition (see docs/unfinished.md) |
 
 ---
 
@@ -595,3 +736,62 @@ line equals the lap-time difference exactly.
 - Against the theoretical best (stitched from several laps), corner metrics near a sector
   line mix two laps; prefer the session best for corner findings.
 
+### Stage 4: real F1 reference laps and the Driver Benchmark (2026-11-15)
+
+**New**
+- Real Formula 1 reference laps from the 2025 season. Formula 1's own archive now needs an
+  F1 TV login, so Pitwall reads FastF1's processed data from the public TracingInsights
+  archive on GitHub. Every file is downloaded once, kept unchanged with its address and a
+  SHA-256 checksum, and used offline afterwards.
+- Choosing a lap: season, event, session (Q1/Q2/Q3), driver, and by default the fastest
+  *valid* lap (not deleted, timing accurate, timed, not an out or in lap). The telemetry must
+  end at the official lap time, or the lap is refused.
+- Common data format with capability flags: only measured samples are kept (the archive's
+  interpolated rows are dropped), the brake is on/off, and there is no steering or wheel
+  slip; comparisons that need those are never made.
+- Placing a real lap on your track: rotation, scale and shift found automatically (mirror
+  images too), with the start-line offset and the fit quality; a poor fit is refused.
+- Measured error bars: your own lap is recorded the way the real F1 feed would record it, many
+  times, to see how far each estimate can be off at each corner.
+- Physics-normalised view: the systematic difference between the game car and the real car
+  (median over the lap) is separated from what is specific to each corner.
+- Findings vs a real driver (brakes earlier, lower minimum speed, later on the throttle,
+  slower exit), only beyond two standard deviations of their uncertainty and when the corner
+  loses time beyond the systematic pace difference.
+- App: the **Driver Benchmark** page (summary, charts, map with the real lap's path, corner
+  table with measured, systematic and normalised values and confidence labels, findings,
+  sectors, notes on the data) and **Add a reference…**. Terminal: `pitwall ref events | laps
+  | fetch | list` and `pitwall benchmark`.
+- The demo also stores two synthetic reference laps (PRO and FST) so the page can be explored
+  without real data.
+- Config: a `[reference]` table to change the download addresses.
+
+**Checked**
+- On real data (in development): Max Verstappen's 2025 Monza pole lap (1:18.792, Q3) is found
+  as the fastest valid lap, its sectors add up to the lap time, its telemetry ends exactly at
+  it, and the qualifying order of the archive matches the real result (VER, NOR, PIA, LEC,
+  HAM). Placing one real Monza lap on another, moved by a known rotation, scale and mirror
+  image, recovers them within 0.01° and 0.1 %, with the corners within 1 m.
+- On synthetic laps with known answers: the reference keeps its exact lap time on your
+  timeline; the start line, the transform and each sample's distance are recovered within
+  1.5 m; your lap against the same driving at real-F1 data quality gives **no** findings;
+  against a faster car driven the same way, also none; braking 30 m early, a slower corner and
+  late throttle are each found at the right corner, after normalisation; lock-ups, wheelspin
+  and soft braking are never claimed against real data.
+
+**Limitations**
+- Not yet checked with a real F1 25 lap: the placement quality limits, the thresholds and the
+  normalisation are set from synthetic data and real reference data, and will be tuned on
+  your Monza laps. The Stage 4 gate is your review of a real lap against Verstappen.
+- Directional: with about 4 samples a second, brake and throttle points of the real lap are
+  known to roughly ±5-10 m, and a single corner's difference of under about 10 m cannot be
+  separated from the data's limits.
+- The normalisation removes one systematic offset per value (and one pace ratio for corners
+  and one for straights); differences between the game car and the real car that vary from
+  corner to corner remain in the normalised values.
+- Downloading needs the internet once per lap; afterwards everything works offline.
+  Practice sessions and races can be used, but qualifying laps are the cleanest references.
+- Results are computed when you open a lap; they are not stored yet (Stage 7).
+- Real F1 corner numbers (T1-T11) are not yet applied to your track model: the archive's
+  corner markers can now be placed on your track, but naming from them is still to do (see
+  docs/unfinished.md, P4). Monza's braking corners keep their suggested names.

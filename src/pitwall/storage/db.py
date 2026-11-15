@@ -115,6 +115,37 @@ MIGRATIONS[2] = """
     ALTER TABLE sessions ADD COLUMN capture_label TEXT;
     CREATE INDEX laps_usable ON laps(usable, lap_time_ms);
 """
+# Stage 4: real-F1 (or synthetic) reference laps. Rebuilt from the raw reference cache.
+MIGRATIONS[3] = """
+    CREATE TABLE ref_laps (
+        ref_key           TEXT PRIMARY KEY,
+        provider          TEXT NOT NULL,
+        synthetic         INTEGER NOT NULL,
+        season            INTEGER NOT NULL,
+        event             TEXT NOT NULL,
+        session           TEXT NOT NULL,
+        session_part      TEXT,
+        driver            TEXT NOT NULL,
+        driver_number     TEXT,
+        driver_name       TEXT,
+        team              TEXT,
+        lap_number        INTEGER NOT NULL,
+        lap_time_ms       INTEGER NOT NULL,
+        s1_ms             INTEGER,
+        s2_ms             INTEGER,
+        s3_ms             INTEGER,
+        compound          TEXT,
+        tyre_life         INTEGER,
+        track_status      TEXT,
+        capabilities_json TEXT NOT NULL,
+        checks_json       TEXT NOT NULL,
+        sources_json      TEXT NOT NULL,
+        samples_path      TEXT NOT NULL,
+        fetched_utc       TEXT NOT NULL,
+        pipeline_version  TEXT NOT NULL
+    );
+    CREATE INDEX ref_laps_event ON ref_laps(season, event, session);
+"""
 SCHEMA_VERSION = max(MIGRATIONS)
 
 
@@ -254,3 +285,26 @@ def best_sector_laps(
             return None
         out.append((row, int(row[col])))
     return out[0], out[1], out[2]
+
+
+# ------------------------------------------------------------------ reference laps
+
+
+def replace_ref_lap(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+    with conn:
+        conn.execute("DELETE FROM ref_laps WHERE ref_key = ?", (row["ref_key"],))
+        _insert(conn, "ref_laps", row)
+
+
+def get_ref_lap(conn: sqlite3.Connection, ref_key: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM ref_laps WHERE ref_key = ?", (ref_key,)).fetchone()
+
+
+def list_ref_laps(conn: sqlite3.Connection, synthetic: bool | None = None) -> list[sqlite3.Row]:
+    sql = "SELECT * FROM ref_laps"
+    args: tuple[Any, ...] = ()
+    if synthetic is not None:
+        sql += " WHERE synthetic = ?"
+        args = (int(synthetic),)
+    sql += " ORDER BY season DESC, event, session, lap_time_ms, driver"
+    return list(conn.execute(sql, args))

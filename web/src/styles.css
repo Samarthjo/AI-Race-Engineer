@@ -660,3 +660,31 @@ table.corners th {
     align-items: flex-start;
   }
 }
+
+/* ------------------------------------------------------------- benchmark */
+
+.badge.inline {
+  margin-left: 4px;
+  padding: 0 6px;
+}
+
+.badge.medium {
+  color: var(--ink-2);
+}
+
+table.bench td.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.add-ref {
+  margin-bottom: 14px;
+}
+
+.add-ref .filters {
+  margin-bottom: 4px;
+}
+
+ul.plain {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}

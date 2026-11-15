@@ -1,5 +1,5 @@
 import { useMemo, useRef } from "react";
-import type { Comparison, SegmentDef } from "../api";
+import type { Series, SegmentDef, TraceView } from "../api";
 
 /** Track map from the lap's own world positions, coloured by where time is gained or lost
  *  against the reference (smoothed delta slope, seconds per 100 m). Diverging scale:
@@ -24,11 +24,13 @@ function bin(rate: number | null): number {
 }
 
 type Props = {
-  data: Comparison;
+  data: TraceView;
   hoverIndex: number | null;
   onHover: (i: number | null) => void;
   segments?: SegmentDef[];
   selected?: string | null;
+  /** Another path in the same frame (e.g. a real F1 lap placed on your track), dashed. */
+  overlay?: { x: Series; z: Series; label: string };
 };
 
 /** Short map label: "T1-T2" from "Variante del Rettifilo (T1-T2)", else "C3". */
@@ -38,7 +40,7 @@ export function shortLabel(seg: SegmentDef): string {
   return seg.name.length <= 4 ? seg.name : seg.id.toUpperCase();
 }
 
-export function TrackMap({ data, hoverIndex, onHover, segments = [], selected = null }: Props) {
+export function TrackMap({ data, hoverIndex, onHover, segments = [], selected = null, overlay }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const frame = useRef<number | null>(null);
   const { x, z, loss_rate: rate, distance } = data.trace;
@@ -102,6 +104,16 @@ export function TrackMap({ data, hoverIndex, onHover, segments = [], selected = 
       .map((s) => ({ seg: s, p: geo.nearest(s.apexes_m[0] ?? (s.start_m + s.end_m) / 2) }));
   }, [geo, segments]);
 
+  const overlayPath = useMemo(() => {
+    if (!overlay) return null;
+    const parts: string[] = [];
+    overlay.x.forEach((xv, i) => {
+      const zv = overlay.z[i];
+      if (xv !== null && zv !== null) parts.push(`${parts.length ? "L" : "M"}${xv.toFixed(1)} ${(-zv).toFixed(1)}`);
+    });
+    return parts.length > 1 ? parts.join(" ") : null;
+  }, [overlay]);
+
   const highlight = useMemo(() => {
     if (!geo || !selected) return null;
     const seg = segments.find((s) => s.id === selected);
@@ -154,6 +166,16 @@ export function TrackMap({ data, hoverIndex, onHover, segments = [], selected = 
             strokeWidth={geo.stroke * 2.6}
             strokeLinecap="round"
             strokeLinejoin="round"
+          />
+        )}
+        {overlayPath && (
+          <path
+            d={overlayPath}
+            fill="none"
+            style={{ stroke: "var(--series-ref)" }}
+            strokeWidth={geo.stroke * 0.45}
+            strokeDasharray={`${geo.stroke * 1.6} ${geo.stroke * 1.1}`}
+            strokeLinecap="round"
           />
         )}
         {geo.segments.map((s, k) => (
@@ -214,6 +236,7 @@ export function TrackMap({ data, hoverIndex, onHover, segments = [], selected = 
       <div className="note">
         Time vs reference per 100 m: grey under {THRESHOLDS[0]} s, then {THRESHOLDS[0]}–{THRESHOLDS[1]},{" "}
         {THRESHOLDS[1]}–{THRESHOLDS[2]}, over {THRESHOLDS[2]} s. Map from your lap's world positions.
+        {overlay && <> Dashed orange line: {overlay.label}.</>}
       </div>
     </div>
   );

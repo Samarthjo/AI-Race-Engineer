@@ -60,6 +60,7 @@ class Finding:
     measured: dict[str, Any]
     evidence: dict[str, float]
     suggestion: str | None
+    basis: str = "self"  # "self": your own laps (60 Hz); "pro_normalised": real F1 lap
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
