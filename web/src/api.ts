@@ -314,6 +314,108 @@ export type BenchmarkData = {
   trace: Comparison["trace"] & { ref_x: Series; ref_z: Series; ref_sample_m: number[] };
 };
 
+// ------------------------------------------------------------------- race engineer
+
+export type Fact = {
+  id: string;
+  kind: string;
+  text: string;
+  segment_id: string | null;
+  segment_name: string | null;
+  basis: string;
+  estimate: boolean;
+  code: string | null;
+  data: Record<string, unknown>;
+};
+
+export type FocusItem = {
+  rank: number;
+  fact_id: string;
+  segment_id: string;
+  segment_name: string;
+  title: string;
+  instruction: string;
+  measured: string;
+  impact_s: number;
+  confidence: string;
+  basis: string;
+};
+
+export type NarrativePart = { title?: string; text: string; cites: string[] };
+export type NarrativeOutput = { summary: NarrativePart; sections: NarrativePart[]; focus: NarrativePart[] };
+export type AnswerOutput = { answer: string; cites: string[]; refused: boolean };
+export type CheckLog = {
+  attempt: number;
+  violations: { kind: string; where: string; detail: string }[];
+  repaired_citations?: boolean;
+  error?: string;
+};
+
+export type Narrative = {
+  narrative_id: string;
+  status: "grounded" | "fallback" | "unavailable";
+  output: NarrativeOutput;
+  attempts: number;
+  log: CheckLog[];
+  provider: string;
+  model: string;
+  prompt_version: string;
+  duration_s: number;
+  error: string | null;
+};
+
+export type Answer = {
+  narrative_id: string;
+  status: "grounded" | "refused" | "fallback" | "unavailable";
+  question: string;
+  output: AnswerOutput;
+  attempts: number;
+  tool_calls: { name: string; arguments: Record<string, unknown> }[];
+  log: CheckLog[];
+  model: string;
+  duration_s: number;
+  error: string | null;
+};
+
+export type StoredText = {
+  narrative_id: string;
+  kind: "report" | "answer";
+  question: string | null;
+  status: string;
+  model: string;
+  prompt_version: string;
+  output: NarrativeOutput | AnswerOutput;
+  created_utc: string;
+};
+
+export type EngineerReport = {
+  version: string;
+  headline: string;
+  lap: { lap_index: number; lap_number: number; lap_time_ms: number | null; usable: boolean };
+  reference: { kind: string; label: string; lap_time_ms: number | null };
+  delta_s: number;
+  facts: Fact[];
+  focus: FocusItem[];
+  losses: { fact_id: string; segment_id: string; segment_name: string; loss_s: number; causes: string[]; cause_titles: string[] }[];
+  strengths: string[];
+  consistency: string[];
+  notes: string[];
+  pro: { key: string; driver: string; label: string; lap_time_ms: number; findings: string[] } | null;
+  text: string;
+  history: StoredText[];
+};
+
+export type EngineerStatus = {
+  provider: string;
+  model: string;
+  base_url: string;
+  reachable: boolean;
+  version: string | null;
+  installed: string[];
+  model_installed: boolean;
+  error: string | null;
+};
+
 export type LiveStatus = {
   listening: boolean;
   receiving: boolean;
@@ -376,4 +478,15 @@ export const api = {
   fetchReference: (p: { session: string; driver: string; ref_session: string; part?: string }) =>
     get<RefSummary>("references/fetch", p, { method: "POST" }),
   benchmark: (p: { session: string; lap: number; ref: string }) => get<BenchmarkData>("benchmark", p),
+  engineerStatus: () => get<EngineerStatus>("engineer/status"),
+  engineerReport: (p: EngineerParams) => get<EngineerReport>("engineer/report", p),
+  narrate: (p: EngineerParams) => get<Narrative>("engineer/narrate", p, { method: "POST" }),
+  ask: (p: EngineerParams & { question: string }) =>
+    get<Answer>("engineer/ask", {}, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(p),
+    }),
 };
+
+export type EngineerParams = { session: string; lap: number; ref: string; ref_lap?: number; pro?: string };

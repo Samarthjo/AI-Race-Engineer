@@ -17,7 +17,7 @@ and writes evidence-backed coaching reports. Runs locally on a Mac.
 | 2 | Lap processing, self-comparison, first UI | done (verified on synthetic laps) |
 | 3 | Track model, corner analysis engine | done (verified on synthetic laps) |
 | 4 | Real F1 reference, pro benchmark | done (verified on synthetic laps and real reference data) |
-| 5 | Race engineer reports (deterministic, then local LLM) | planned |
+| 5 | Race engineer: measured report, local-LLM write-up and Q&A with a fact check | done (verified with synthetic laps and a stand-in model; model choice pending your eval) |
 | 6 | Live telemetry | planned |
 | 7 | Driver development and history | planned |
 
@@ -87,6 +87,14 @@ and writes evidence-backed coaching reports. Runs locally on a Mac.
    Then open **Driver Benchmark** in the app, or run
    `uv run pitwall benchmark latest --lap <#> --driver VER`.
 
+10. Optional, for the AI race engineer: install [Ollama](https://ollama.com) on the Mac, then
+
+    ```bash
+    ollama pull qwen3:14b
+    ```
+
+    and open **Race Engineer** in the app (the measured report works without it).
+
 Then follow the recording checklist in [docs/golden-sessions.md](docs/golden-sessions.md).
 
 ## Commands
@@ -104,13 +112,14 @@ Then follow the recording checklist in [docs/golden-sessions.md](docs/golden-ses
 | `pitwall laps <session\|latest>` | Lap times, sectors, validity, flashbacks, data quality |
 | `pitwall export <session> --lap N` | Per-frame telemetry of a lap to CSV/Parquet |
 | `pitwall decode <id>` | Print decoded packets as JSON |
-| `pitwall serve` | Local web app: Lap Analysis, Driver Benchmark |
+| `pitwall serve` | Local web app: Lap Analysis, Driver Benchmark, Race Engineer |
 | `pitwall compare <session> --lap N` | Lap vs session best / personal best / theoretical best, in the terminal |
 | `pitwall demo` | Synthetic demo session (labelled synthetic, never mixed with real laps) |
 | `pitwall corners <session> --lap N` | Corner-by-corner time loss and findings |
 | `pitwall track list\|show\|draft\|confirm\|rename` | Track models (detected corners) |
 | `pitwall ref events\|laps\|fetch\|list` | Real F1 reference laps (2025): list, download once, store |
 | `pitwall benchmark <session> --lap N --driver VER` | Your lap against a real F1 lap: measured and physics-normalised |
+| `pitwall engineer status\|report\|narrate\|ask\|eval` | Race engineer: measured report, checked AI write-up, questions, model eval |
 
 ## Data
 

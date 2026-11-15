@@ -46,6 +46,12 @@ Personal F1 race engineer for F1 25 (PS5) telemetry. Runs locally on a Mac Mini 
   wheel slip) and carry measured uncertainty; pro findings use the physics-normalised values
   (`analysis/benchmark.py`). Bump `REFERENCE_PIPELINE_VERSION` (`reference/store.py`) when
   the normalised reference format changes.
+- The AI never sees telemetry, only facts (`engineer/facts.py`, built by `engineer/report.py`).
+  Every AI text passes `engineer/validate.py` (numbers, corners, laps, direction, estimates,
+  topics) or is replaced by the deterministic report; AI texts are stored separately
+  (`narratives` table) with model and prompt version. Bump `PROMPT_VERSION` /
+  `QA_PROMPT_VERSION` when prompts change and `REPORT_VERSION` when the facts change; keep the
+  golden report (`tests/golden/`) reviewed.
 - Findings are deterministic rules with documented thresholds (`analysis/findings.py`); each
   keeps measurement and suggestion separate, and impacts within one corner may overlap.
   Never emit a finding below its threshold or without the channels it needs.
@@ -67,6 +73,8 @@ src/pitwall/track/     track models: draft from a lap, JSON storage, confirm/ren
                        (placing a real F1 lap on your track)
 src/pitwall/reference/ real-F1 reference laps: archive + raw cache, lap tables, telemetry checks,
                        normalised store, era/track guards (Stage 4)
+src/pitwall/engineer/  race engineer (Stage 5): facts, deterministic report, Ollama provider,
+                       grounding check, narrator, Q&A tools, stored AI texts, model eval
 src/pitwall/api/       FastAPI app, live status, built UI in static/
 src/pitwall/synth/     synthetic track, driver model, sessions, demo, synthetic "real F1"
                        archive (never real data)

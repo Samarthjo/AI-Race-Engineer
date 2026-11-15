@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from pitwall import __version__
 from pitwall.analysis.benchmark import METRICS as BENCHMARK_METRICS
@@ -29,7 +30,13 @@ from pitwall.analysis.findings import lap_findings
 from pitwall.analysis.metrics import DEFINITIONS, load_lap_metrics
 from pitwall.analysis.trace import NotComparableError, check_comparable, load_trace
 from pitwall.api.live import LiveStatus
-from pitwall.config import ReferenceConfig
+from pitwall.config import EngineerConfig, ReferenceConfig
+from pitwall.engineer import store as narratives
+from pitwall.engineer.llm import LLMProvider, make_provider
+from pitwall.engineer.narrator import PROMPT_VERSION
+from pitwall.engineer.qa import QA_PROMPT_VERSION
+from pitwall.engineer.report import render_text
+from pitwall.engineer.service import LapContext, ask_lap, build_context, narrate_lap
 from pitwall.ingest.pipeline import DB_NAME
 from pitwall.reference.archive import Archive, FetchError
 from pitwall.reference.laps import ReferenceDataError, classification, parse_lap_rows
@@ -254,11 +261,34 @@ def benchmark_payload(
     return payload
 
 
+class AskBody(BaseModel):
+    session: str
+    lap: int
+    question: str = Field(min_length=1, max_length=500)
+    ref: str = "session_best"
+    ref_lap: int | None = None
+    pro: str | None = None
+
+
 def create_app(
-    data_dir: Path, live: LiveStatus | None = None, reference: ReferenceConfig | None = None
+    data_dir: Path,
+    live: LiveStatus | None = None,
+    reference: ReferenceConfig | None = None,
+    engineer: EngineerConfig | None = None,
+    llm: LLMProvider | None = None,
 ) -> FastAPI:
     data_dir = Path(data_dir)
     ref_cfg = reference or ReferenceConfig()
+    eng_cfg = engineer or EngineerConfig()
+    provider: LLMProvider = llm or make_provider(
+        eng_cfg.provider,
+        model=eng_cfg.model,
+        base_url=eng_cfg.base_url,
+        timeout_s=eng_cfg.timeout_s,
+        temperature=eng_cfg.temperature,
+        num_ctx=eng_cfg.num_ctx,
+        think=eng_cfg.think,
+    )
 
     def archive(season: int, synthetic: bool) -> Archive:
         if synthetic:
@@ -520,6 +550,70 @@ def create_app(
                 raise HTTPException(422, str(exc)) from exc
             lap_metrics = load_lap_metrics(data_dir, s, lap_d)
         return benchmark_payload(result, s, lap_d, lap_metrics, model, step)
+
+    # ------------------------------------------------------------ race engineer
+
+    def lap_context(
+        conn: sqlite3.Connection,
+        session: str,
+        lap: int,
+        ref: str,
+        ref_lap: int | None,
+        pro: str | None,
+    ) -> LapContext:
+        try:
+            return build_context(
+                conn, data_dir, session, lap, ref_kind=ref, ref_lap=ref_lap, pro_key=pro or None
+            )
+        except LookupError as exc:
+            raise HTTPException(404, str(exc).strip("'\"")) from exc
+        except NotComparableError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except (FetchError, ReferenceDataError) as exc:
+            raise HTTPException(502, str(exc)) from exc
+
+    @app.get("/api/engineer/status")
+    def engineer_status() -> dict[str, Any]:
+        return {
+            **provider.status(),
+            "prompt_versions": {"report": PROMPT_VERSION, "answer": QA_PROMPT_VERSION},
+        }
+
+    @app.get("/api/engineer/report")
+    def engineer_report(
+        session: str,
+        lap: int,
+        ref: str = "session_best",
+        ref_lap: int | None = None,
+        pro: str | None = None,
+    ) -> dict[str, Any]:
+        """The deterministic report (no AI): facts, focus, losses, strengths, notes."""
+        with database() as conn:
+            ctx = lap_context(conn, session, lap, ref, ref_lap, pro)
+            stored = [narratives.row_payload(r) for r in db.list_narratives(conn, session, lap, 20)]
+        return {**ctx.report.to_dict(), "text": render_text(ctx.report), "history": stored}
+
+    @app.post("/api/engineer/narrate")
+    def engineer_narrate(
+        session: str,
+        lap: int,
+        ref: str = "session_best",
+        ref_lap: int | None = None,
+        pro: str | None = None,
+    ) -> dict[str, Any]:
+        """AI write-up of the report, checked against the facts (or the measured report
+        when it fails the check or no model is available). Stored with its provenance."""
+        with database() as conn:
+            ctx = lap_context(conn, session, lap, ref, ref_lap, pro)
+            result, nid = narrate_lap(conn, ctx, provider)
+        return {"narrative_id": nid, **result.to_dict()}
+
+    @app.post("/api/engineer/ask")
+    def engineer_ask(body: AskBody) -> dict[str, Any]:
+        with database() as conn:
+            ctx = lap_context(conn, body.session, body.lap, body.ref, body.ref_lap, body.pro)
+            result, nid = ask_lap(conn, data_dir, ctx, provider, body.question)
+        return {"narrative_id": nid, **result.to_dict()}
 
     @app.get("/api/live")
     def live_status() -> dict[str, Any]:

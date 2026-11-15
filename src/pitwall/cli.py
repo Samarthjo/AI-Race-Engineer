@@ -35,6 +35,11 @@ ref_app = typer.Typer(
     no_args_is_help=True, help="Real Formula 1 reference laps (2025 season, F1 25 base cars)."
 )
 app.add_typer(ref_app, name="ref")
+engineer_app = typer.Typer(
+    no_args_is_help=True,
+    help="Race engineer: measured report, AI write-up (local model) and questions.",
+)
+app.add_typer(engineer_app, name="engineer")
 
 console = Console()
 
@@ -794,7 +799,7 @@ def serve(
 
     cfg = _load(config, data_dir)
     live = None if no_live else LiveStatus("127.0.0.1", live_port)
-    application = create_app(cfg.data_dir, live, cfg.reference)
+    application = create_app(cfg.data_dir, live, cfg.reference, cfg.engineer)
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}"
     console.print(f"[bold green]Pitwall[/] running at {url}  (Ctrl+C to stop)")
     if not (STATIC_DIR / "index.html").exists():
@@ -1481,6 +1486,206 @@ def benchmark_cmd(
             "threshold and uncertainty."
         )
     console.print("[dim]Not assessed against real F1 data: " + "; ".join(b.not_assessed) + ".[/]")
+
+
+# ----------------------------------------------------------------- race engineer
+
+RefOpt = Annotated[str, typer.Option(help="session_best | personal_best | theoretical_best | lap")]
+RefLapOpt = Annotated[int | None, typer.Option(help="With --ref lap: the reference lap index")]
+ProOpt = Annotated[
+    str | None, typer.Option("--driver", help="Also compare with a real F1 driver, e.g. VER")
+]
+
+
+def _provider(cfg: Config):
+    from pitwall.engineer.llm import make_provider
+
+    e = cfg.engineer
+    return make_provider(
+        e.provider,
+        model=e.model,
+        base_url=e.base_url,
+        timeout_s=e.timeout_s,
+        temperature=e.temperature,
+        num_ctx=e.num_ctx,
+        think=e.think,
+    )
+
+
+def _lap_context(
+    cfg: Config,
+    conn: Any,
+    session: str,
+    lap: int,
+    ref: str,
+    ref_lap: int | None,
+    driver: str | None,
+):
+    from pitwall.analysis.trace import NotComparableError
+    from pitwall.engineer.service import build_context
+
+    s = dict(_pick_session(conn, session))
+    pro = _pick_reference(conn, cfg, s, driver, "Qualifying", None) if driver else None
+    try:
+        return build_context(
+            conn, cfg.data_dir, s["session_key"], lap, ref_kind=ref, ref_lap=ref_lap, pro_key=pro
+        )
+    except (LookupError, NotComparableError) as exc:
+        console.print(f"[red]Cannot build the report: {exc}[/]")
+        raise typer.Exit(1) from None
+
+
+@engineer_app.command("status")
+def engineer_status(config: ConfigOpt = None, data_dir: DataDirOpt = None) -> None:
+    """Check the local model: is Ollama running, is the model installed?"""
+    cfg = _load(config, data_dir)
+    st = _provider(cfg).status()
+    console.print(f"Provider: {st['provider']} at {st['base_url']} · model [bold]{st['model']}[/]")
+    if not st["reachable"]:
+        console.print(f"[red]✗[/] {st['error']}")
+        console.print(
+            "  Install Ollama on the Mac (ollama.com), start it, then: "
+            f"[bold]ollama pull {st['model']}[/]"
+        )
+        raise typer.Exit(1)
+    console.print(f"[green]✓[/] Ollama {st['version']} is running")
+    installed = ", ".join(st["installed"]) or "none"
+    if st["model_installed"]:
+        console.print(f"[green]✓[/] {st['model']} is installed (all models: {installed})")
+    else:
+        console.print(f"[red]✗[/] {st['error']} (installed: {installed})")
+        raise typer.Exit(1)
+
+
+@engineer_app.command("report")
+def engineer_report(
+    session: Annotated[str, typer.Argument(help="Session id (or unique part), or 'latest'")],
+    lap: Annotated[int, typer.Option(help="Lap index (# in `pitwall laps`)")],
+    ref: RefOpt = "session_best",
+    ref_lap: RefLapOpt = None,
+    driver: ProOpt = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Facts and report as JSON")] = False,
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """The measured report (no AI): focus for the next lap, where the time goes, notes."""
+    from pitwall.engineer.report import render_text
+
+    cfg = _load(config, data_dir)
+    ctx = _lap_context(cfg, _db(cfg), session, lap, ref, ref_lap, driver)
+    if as_json:
+        console.print_json(json.dumps(ctx.report.to_dict()))
+        return
+    console.print(render_text(ctx.report), markup=False, highlight=False)
+
+
+@engineer_app.command("narrate")
+def engineer_narrate(
+    session: Annotated[str, typer.Argument(help="Session id (or unique part), or 'latest'")],
+    lap: Annotated[int, typer.Option(help="Lap index (# in `pitwall laps`)")],
+    ref: RefOpt = "session_best",
+    ref_lap: RefLapOpt = None,
+    driver: ProOpt = None,
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """The report written up by the local AI, checked against the facts."""
+    from pitwall.engineer.narrator import render_narrative
+    from pitwall.engineer.service import narrate_lap
+
+    cfg = _load(config, data_dir)
+    conn = _db(cfg)
+    ctx = _lap_context(cfg, conn, session, lap, ref, ref_lap, driver)
+    with console.status(f"Asking {cfg.engineer.model}…"):
+        result, nid = narrate_lap(conn, ctx, _provider(cfg))
+    status = {
+        "grounded": "[green]checked: every number and corner traced to the measured facts[/]",
+        "fallback": "[yellow]the AI text failed the fact check twice: measured report below[/]",
+        "unavailable": f"[yellow]no AI available ({result.error}): measured report below[/]",
+    }[result.status]
+    console.print(status)
+    console.print(render_narrative(result.output), markup=False, highlight=False)
+    console.print(
+        f"[dim]{result.provider} · {result.model} · prompt {result.prompt_version} · "
+        f"{result.attempts} attempt(s) · {result.duration_s:.1f} s · stored as {nid[:8]}[/]"
+    )
+
+
+@engineer_app.command("ask")
+def engineer_ask(
+    session: Annotated[str, typer.Argument(help="Session id (or unique part), or 'latest'")],
+    question: Annotated[str, typer.Argument(help="Your question, in quotes")],
+    lap: Annotated[int, typer.Option(help="Lap index (# in `pitwall laps`)")],
+    ref: RefOpt = "session_best",
+    ref_lap: RefLapOpt = None,
+    driver: ProOpt = None,
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Ask the engineer about a lap; answers only from measured data, or refuses."""
+    from pitwall.engineer.service import ask_lap
+
+    cfg = _load(config, data_dir)
+    conn = _db(cfg)
+    ctx = _lap_context(cfg, conn, session, lap, ref, ref_lap, driver)
+    with console.status(f"Asking {cfg.engineer.model}…"):
+        result, _ = ask_lap(conn, cfg.data_dir, ctx, _provider(cfg), question)
+    out = result.output
+    console.print(out["answer"], markup=False, highlight=False)
+    if out.get("cites"):
+        console.print(f"[dim]Sources: {', '.join(out['cites'])}[/]")
+    note = {
+        "grounded": "checked against the measured facts",
+        "refused": "the data cannot answer this",
+        "fallback": "the AI answer failed the fact check twice",
+        "unavailable": f"no AI available: {result.error}",
+    }[result.status]
+    tools = ", ".join(c["name"] for c in result.tool_calls) or "none"
+    console.print(f"[dim]{note} · tools used: {tools} · {result.duration_s:.1f} s[/]")
+
+
+@engineer_app.command("eval")
+def engineer_eval(
+    limit: Annotated[int, typer.Option(help="Number of laps")] = 20,
+    session: Annotated[str | None, typer.Option(help="Only this session")] = None,
+    model: Annotated[str | None, typer.Option(help="Model to evaluate (default: config)")] = None,
+    synthetic: Annotated[bool, typer.Option("--synthetic", help="Use demo sessions too")] = False,
+    config: ConfigOpt = None,
+    data_dir: DataDirOpt = None,
+) -> None:
+    """Write up many laps with a model and produce a sheet to rate them (the Stage 5 eval)."""
+    from dataclasses import replace
+
+    from pitwall.analysis.trace import NotComparableError
+    from pitwall.engineer.eval import run_eval
+
+    cfg = _load(config, data_dir)
+    if model:
+        cfg.engineer = replace(cfg.engineer, model=model)
+    conn = _db(cfg)
+    sessions = [dict(_pick_session(conn, session))] if session else None
+    provider = _provider(cfg)
+    st = provider.status()
+    if not st["reachable"] or not st["model_installed"]:
+        console.print(f"[red]{st['error']}[/]")
+        raise typer.Exit(1)
+    try:
+        summary, path = run_eval(
+            conn, cfg.data_dir, provider, limit=limit, sessions=sessions, synthetic=synthetic,
+            progress=lambda i, n, label: console.print(f"[dim]{i}/{n} {label}[/]"),
+        )  # fmt: skip
+    except NotComparableError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1) from None
+    if not summary["laps"]:
+        console.print("No lap to evaluate: record and ingest some laps first.")
+        raise typer.Exit(1)
+    console.print(
+        f"{summary['laps']} laps · grounded first time {summary['grounded_first']} · after the "
+        f"retry {summary['grounded']} · fell back to the measured report {summary['fallback']} "
+        f"· median {summary['median_s']:.1f} s per lap"
+    )
+    console.print(f"Rate the write-ups in [bold]{path}[/] (accuracy and usefulness, 1-5).")
 
 
 if __name__ == "__main__":

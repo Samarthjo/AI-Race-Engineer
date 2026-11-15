@@ -21,3 +21,13 @@ expected_hz = 60          # the PS5 "UDP Send Rate"; used by the health checks
 base_url = "https://raw.githubusercontent.com/TracingInsights/{season}/main/"
 schedule_url = "https://raw.githubusercontent.com/theOehrly/f1schedule/master/schedule_{season}.json"
 timeout_s = 30.0
+
+[engineer]
+# The race engineer's local language model, served by Ollama on this Mac (ollama.com).
+provider = "ollama"
+model = "qwen3:14b"          # choose with `pitwall engineer eval` on your own laps
+base_url = "http://127.0.0.1:11434"
+timeout_s = 180.0
+temperature = 0.2
+num_ctx = 8192               # context window; lower it if memory is tight
+think = false                # thinking mode of models that have one (slower)

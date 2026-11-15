@@ -1,0 +1,17 @@
+Lap 5: 1:12.235, +0.609 s against lap 2. Biggest loss: C4 (+0.594 s), mainly: later on the throttle.
+
+Focus for the next lap
+ 1. C4 · Later on the throttle
+    Try: Start squeezing the throttle about 15 m earlier, as soon as the car is pointing out of the corner.
+    Measured: Full throttle comes 30 m later (3120 m vs 3090 m into the lap). [find:c4:LATE_THROTTLE]
+
+Where the time goes
+ - C4: +0.594 s · later on the throttle [seg:c4]
+
+Consistency
+ - C1 varies from lap to lap: ±0.172 s (standard deviation) over 5 usable laps; best 5.178 s on lap 2. [cons:c1]
+ - Straight to C5 (flat) varies from lap to lap: ±0.169 s (standard deviation) over 5 usable laps; best 8.919 s on lap 2. [cons:s4]
+ - Ideal lap from your best segments of the session: 1:11.624. [cons:ideal]
+
+Notes
+ - Corners were detected automatically (draft track model, not yet confirmed). [note:draft-corners]

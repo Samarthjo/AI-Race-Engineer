@@ -415,6 +415,8 @@ losses with evidence → ranked next-lap instructions. LLM narration (5b) follow
   therefore reads FastF1's processed 2025 data from the public TracingInsights archive
   (github.com/TracingInsights/2025), behind the same raw cache and normalised store; FastF1
   with an F1 TV login and OpenF1 stay possible later sources (docs/unfinished.md).
+- Local model (Stage 5): Ollama, starting with `qwen3:14b` (about 9 GB, fits the 14–16 GB
+  budget); the final choice is made with `pitwall engineer eval` on your own laps.
 
 **Still open (not blocking now):** second track (end of Stage 3).
 

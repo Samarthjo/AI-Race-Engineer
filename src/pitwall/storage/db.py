@@ -146,6 +146,31 @@ MIGRATIONS[3] = """
     );
     CREATE INDEX ref_laps_event ON ref_laps(season, event, session);
 """
+# Stage 5: AI-written texts (L5), kept apart from the measured analysis.
+MIGRATIONS[4] = """
+    CREATE TABLE narratives (
+        narrative_id    TEXT PRIMARY KEY,
+        kind            TEXT NOT NULL,
+        session_key     TEXT NOT NULL,
+        lap_index       INTEGER NOT NULL,
+        reference       TEXT NOT NULL,
+        question        TEXT,
+        status          TEXT NOT NULL,
+        provider        TEXT NOT NULL,
+        model           TEXT NOT NULL,
+        prompt_version  TEXT NOT NULL,
+        report_version  TEXT NOT NULL,
+        facts_hash      TEXT NOT NULL,
+        output_json     TEXT NOT NULL,
+        attempts        INTEGER NOT NULL,
+        log_json        TEXT NOT NULL,
+        error           TEXT,
+        duration_s      REAL,
+        created_utc     TEXT NOT NULL,
+        app_version     TEXT NOT NULL
+    );
+    CREATE INDEX narratives_lap ON narratives(session_key, lap_index, created_utc);
+"""
 SCHEMA_VERSION = max(MIGRATIONS)
 
 
@@ -307,4 +332,25 @@ def list_ref_laps(conn: sqlite3.Connection, synthetic: bool | None = None) -> li
         sql += " WHERE synthetic = ?"
         args = (int(synthetic),)
     sql += " ORDER BY season DESC, event, session, lap_time_ms, driver"
+    return list(conn.execute(sql, args))
+
+
+# ------------------------------------------------------------------ AI texts (L5)
+
+
+def insert_narrative(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+    with conn:
+        _insert(conn, "narratives", row)
+
+
+def list_narratives(
+    conn: sqlite3.Connection, session_key: str, lap_index: int | None = None, limit: int = 50
+) -> list[sqlite3.Row]:
+    sql = "SELECT * FROM narratives WHERE session_key = ?"
+    args: list[Any] = [session_key]
+    if lap_index is not None:
+        sql += " AND lap_index = ?"
+        args.append(lap_index)
+    sql += " ORDER BY created_utc DESC, rowid DESC LIMIT ?"
+    args.append(int(limit))
     return list(conn.execute(sql, args))

@@ -1,3 +1,3 @@
 """Pitwall AI: personal F1 race engineer for F1 25 telemetry."""
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"

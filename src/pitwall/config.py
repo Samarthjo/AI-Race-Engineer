@@ -7,7 +7,8 @@ Lookup order (later wins):
   4. CLI options (applied by the caller)
 
 The ``[reference]`` table sets where real-F1 reference data is downloaded from (see
-``pitwall.reference.archive``); ``{season}`` in a URL is replaced by the season.
+``pitwall.reference.archive``); ``{season}`` in a URL is replaced by the season. The
+``[engineer]`` table chooses the local language model (Ollama) of the race engineer.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pitwall.engineer.llm import DEFAULT_MODEL, DEFAULT_URL
 from pitwall.reference.archive import SCHEDULE_URL, TI_BASE_URL, TIMEOUT_S
 
 DEFAULT_CONFIG_PATH = Path("~/.config/pitwall/config.toml").expanduser()
@@ -46,10 +48,22 @@ class ReferenceConfig:
 
 
 @dataclass
+class EngineerConfig:
+    provider: str = "ollama"
+    model: str = DEFAULT_MODEL
+    base_url: str = DEFAULT_URL
+    timeout_s: float = 180.0
+    temperature: float = 0.2
+    num_ctx: int = 8192
+    think: bool = False
+
+
+@dataclass
 class Config:
     data_dir: Path = DEFAULT_DATA_DIR
     capture: CaptureConfig = field(default_factory=CaptureConfig)
     reference: ReferenceConfig = field(default_factory=ReferenceConfig)
+    engineer: EngineerConfig = field(default_factory=EngineerConfig)
     source: Path | None = None
 
     @property
@@ -73,12 +87,17 @@ def load_config(path: Path | None = None, env: dict[str, str] | None = None) -> 
 
 
 def _apply(cfg: Config, data: dict[str, Any]) -> None:
-    unknown = set(data) - {"data_dir", "capture", "reference"}
+    unknown = set(data) - {"data_dir", "capture", "reference", "engineer"}
     if unknown:
         raise ValueError(f"unknown config keys: {sorted(unknown)}")
     if "data_dir" in data:
         cfg.data_dir = Path(str(data["data_dir"])).expanduser()
-    for table, target in (("capture", cfg.capture), ("reference", cfg.reference)):
+    tables: tuple[tuple[str, Any], ...] = (
+        ("capture", cfg.capture),
+        ("reference", cfg.reference),
+        ("engineer", cfg.engineer),
+    )
+    for table, target in tables:
         values = data.get(table, {})
         bad = set(values) - set(type(target).__dataclass_fields__)
         if bad:

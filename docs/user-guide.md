@@ -21,7 +21,8 @@ at the bottom.
 | Consistency per corner and your ideal lap (best segments) | ✅ Stage 3 |
 | Real F1 reference laps (2025 season): download once, checked, kept offline | ✅ Stage 4 |
 | Driver Benchmark: your lap against a real F1 lap, measured and physics-normalised, with uncertainty | ✅ Stage 4 |
-| Race engineer reports | Stage 5 |
+| Engineer's report: focus for the next lap, where the time goes, strengths, notes (measured, no AI) | ✅ Stage 5 |
+| AI write-up and questions with a local model (Ollama); every number checked against the measurements | ✅ Stage 5 |
 | Live telemetry screen | Stage 6 |
 | Long-term progress tracking | Stage 7 |
 
@@ -83,6 +84,41 @@ Network tips (details in [setup-ps5-mac.md](setup-ps5-mac.md)):
 - Give the Mac a fixed address (a DHCP reservation in your router), so the address you typed
   on the PS5 stays correct.
 - If macOS asks whether Python may accept incoming connections, choose **Allow**.
+
+### 1.4 The local AI model (optional)
+
+The race engineer's measured report needs nothing extra. For the AI write-up and questions,
+Pitwall uses a language model that runs **on the Mac** through [Ollama](https://ollama.com):
+nothing is sent to the internet.
+
+1. Install Ollama: download the Mac app from ollama.com and open it (it then runs in the
+   background), or with Homebrew:
+
+   ```bash
+   brew install ollama
+   ```
+
+   ```bash
+   ollama serve
+   ```
+
+2. Download the model (about 9 GB, once):
+
+   ```bash
+   ollama pull qwen3:14b
+   ```
+
+3. Check that Pitwall can use it:
+
+   ```bash
+   uv run pitwall engineer status
+   ```
+
+`qwen3:14b` needs about 10–12 GB of memory while it runs (an estimate: the model plus its
+working memory for the facts), which fits in the Mac's 24 GB alongside macOS and Pitwall. Another model can be set in the config file
+(`[engineer] model = "..."`, see [config.example.toml](config.example.toml)); which model works
+best is decided by rating its write-ups on your own laps (see
+[3.10](#310-choosing-the-model)).
 
 ---
 
@@ -217,6 +253,14 @@ uv run pitwall benchmark latest --lap 4 --driver VER
 The page and the results are explained in [3.6](#36-the-driver-benchmark-page). In the app,
 **Add a reference…** does the same as `pitwall ref fetch`, for the track of the session you
 picked.
+
+### Step 9: ask your engineer
+
+Open **Race Engineer** in the web app (or use the terminal, see [3.9](#39-the-engineer-in-the-terminal)).
+Pick a lap: the measured report appears at once. **Write it up** asks the local model for a
+short write-up; the box under it lets you ask questions such as "Where do I lose most time?"
+or "How was this lap against lap 4?". The page is explained in
+[3.8](#38-the-race-engineer-page).
 
 ### No PS5 nearby? Try the demo
 
@@ -508,6 +552,98 @@ Events can be named in full ("Italian Grand Prix") or by place ("monza"). The do
 addresses can be changed in the config file (`[reference]`, see
 [config.example.toml](config.example.toml)), for example to a mirror.
 
+### 3.8 The Race Engineer page
+
+Pick a session, a lap, what to compare with (session best, personal best or theoretical best)
+and, optionally, a stored real F1 lap of the same event.
+
+**Engineer's report · measured.** Built by fixed rules from the measurements, without AI, so
+it is always available and always the same for the same lap:
+
+- the **headline**: lap time, delta to the reference and the biggest loss;
+- **focus for the next lap**: at most three findings, one per corner, ranked by time impact
+  and confidence (findings from your own laps count more than those against real F1 data,
+  which are estimates). Each shows what to *try* and, separately, what was *measured*;
+- **where the time goes**: the corners and straights that lose most, with the findings that
+  explain them;
+- **strengths**, **consistency** across the session's usable laps, and **notes** (synthetic
+  data, draft corners, an unclean lap, no findings, what real F1 data cannot show).
+
+Every line ends with a small grey tag, its **fact id** (for example `find:c1:EARLY_BRAKE` or
+`seg:c4`). Facts are the only material the AI may use.
+
+When there is nothing to change (no finding above the thresholds), the report says so instead
+of inventing advice.
+
+**AI write-up.** The model receives only the facts (never telemetry) and writes a short
+summary and up to three focus points. A program then checks every part:
+
+- every number must be written in a fact the part cites (rounding allowed: 0.386 s may become
+  0.39 s; no sums or differences of its own);
+- a time called a gain must be a gain in the facts, a loss a loss;
+- every corner named, and every lap number, must come from the cited facts;
+- numbers from real F1 comparisons must be worded as estimates ("about");
+- tyres, fuel, set-up, steering, lock-ups, wheelspin and similar topics may only come up
+  when a cited fact mentions them;
+- at most three focus points, each citing a finding.
+
+A citation that is only missing for a correctly quoted number is added automatically. If
+anything else fails, the model gets one second chance with the list of problems; if that
+fails too, the page shows the measured report instead and says so (**What the check
+rejected** lists why). A green line means everything was traced. Hover a fact tag to see the
+measured sentence behind it. The pill at the top right of the card shows whether Ollama and
+the model are ready.
+
+**Ask your engineer.** Questions are answered the same way: the model may look things up
+(the corners, one corner in detail, this lap against another lap of the session) and must
+cite what it uses; its answer goes through the same check. Questions the data cannot answer
+(tyres, fuel, set-up, steering, other cars, past sessions) get an honest "can't tell"; if an
+answer fails the check twice, Pitwall answers "I can't answer that reliably from the measured
+data" itself.
+
+**Stored.** Every write-up and answer is stored with the model, the prompt version, the
+report version, a fingerprint of the facts it saw, the check results and how long it took, so
+you can always see what produced a text. They are kept apart from the measurements.
+
+### 3.9 The engineer in the terminal
+
+| Command | What it does |
+|---|---|
+| `uv run pitwall engineer status` | Is Ollama running, is the model installed? |
+| `uv run pitwall engineer report latest --lap 4` | The measured report (`--json` for the facts) |
+| `uv run pitwall engineer narrate latest --lap 4` | The AI write-up, checked, with its fact ids |
+| `uv run pitwall engineer ask latest "Where do I lose most time?" --lap 4` | A question about the lap |
+| `uv run pitwall engineer eval` | Writes up 20 laps and makes a sheet to rate them (see 3.10) |
+
+All take `--ref` (`session_best`, `personal_best`, `theoretical_best`, or `lap` with
+`--ref-lap #`) and `--driver VER` to add a stored real F1 lap of the same event.
+
+### 3.10 Choosing the model
+
+Which local model writes the most accurate and useful reports is measured on your laps, not
+assumed:
+
+```bash
+uv run pitwall engineer eval --model qwen3:14b
+```
+
+It writes up to 20 of your recent laps (each session's best lap is the reference, so it is
+skipped), and prints how many passed the fact check at the first try, after the retry, and
+how many fell back to the measured report. It also saves a sheet in
+`~/PitwallData/engineer/` with, for every lap, the measured report next to the AI text and
+blank fields for your rating (accuracy and usefulness, 1–5, and any unsupported claim you
+spot). Pull another model and run it again to compare, for example:
+
+```bash
+ollama pull qwen3:8b
+```
+
+```bash
+uv run pitwall engineer eval --model qwen3:8b
+```
+
+Keep the model with no unsupported claims and the best ratings in `[engineer] model`.
+
 ---
 
 ## 4. Command reference
@@ -532,6 +668,7 @@ addresses can be changed in the config file (`[reference]`, see
 | `pitwall track list \| show \| draft \| confirm \| rename` | Manage track models (corners); see [3.5](#35-track-models) |
 | `pitwall ref events \| laps \| fetch \| list` | Real F1 reference laps; see [3.7](#37-reference-laps-in-the-terminal) |
 | `pitwall benchmark <session\|latest> --lap # --driver VER` | Your lap against a real F1 lap, in the terminal (`--ref <key>`, `--ref-session`, `--part`) |
+| `pitwall engineer status \| report \| narrate \| ask \| eval` | The race engineer; see [3.9](#39-the-engineer-in-the-terminal) |
 | `pitwall version` | Version |
 
 All commands accept `--data-dir` (or the environment variable `PITWALL_DATA_DIR`) to use a
@@ -563,6 +700,9 @@ Everything stays on the Mac, by default in `~/PitwallData`:
 - `references/raw/` keeps the reference data working offline. Everything in
   `references/laps/` and in the catalogue is rebuilt from it when Pitwall's processing
   changes. Real F1 data stays on your Mac; it is never added to the code repository.
+- AI write-ups and answers are stored in `pitwall.db` (table `narratives`), apart from the
+  measurements; `engineer/eval-*.md` holds the rating sheets of `pitwall engineer eval`. The
+  model itself lives in Ollama's own folder.
 
 - **`raw/` is the precious part.** Back it up. Everything else can be rebuilt from it with
   `uv run pitwall ingest --force`, which happens automatically when a new Pitwall version
@@ -606,6 +746,11 @@ Everything stays on the Mac, by default in `~/PitwallData`:
 | `synthetic laps are only compared with synthetic references` | Demo laps use the demo's synthetic references (PRO, FST); real laps use real references |
 | `cannot place the reference on your track: …` | The real lap does not fit your lap's path (wrong track or layout, or a lap with an off). Try another of your laps |
 | Yellow banner "check it on the map" on Driver Benchmark | The fit is usable but not perfect (e.g. the start lines are far apart); compare the dashed orange line with your path on the map |
+| Race Engineer: "Ollama not running" (or `engineer status` says it cannot reach it) | Open the Ollama app, or run `ollama serve` in a Terminal window, then reload the page. The measured report works without it |
+| "run: ollama pull qwen3:14b" | The model is not downloaded yet: run that command once |
+| The write-up takes long | The first request loads the model into memory (up to about a minute); later ones are faster. A smaller model (`qwen3:8b`) is quicker |
+| "The AI text failed the fact check twice" | The model wrote something the measurements do not support, so the measured report is shown instead. Try again, or compare models with `pitwall engineer eval` |
+| The Mac runs out of memory with the model | Use a smaller model, or lower `[engineer] num_ctx` in the config file |
 | Why not FastF1 directly? | Since October 2026 Formula 1's timing archive answers "401 Unauthorized" without an F1 TV login, for FastF1 too. Using it with your login is a possible later addition (see docs/unfinished.md) |
 
 ---
@@ -795,3 +940,51 @@ line equals the lap-time difference exactly.
 - Real F1 corner numbers (T1-T11) are not yet applied to your track model: the archive's
   corner markers can now be placed on your track, but naming from them is still to do (see
   docs/unfinished.md, P4). Monza's braking corners keep their suggested names.
+
+### Stage 5: the race engineer (2026-11-15)
+
+**New**
+- **Engineer's report**, measured and without AI: headline, at most three focus points for
+  the next lap (ranked by time impact and confidence, one per corner, suggestion kept apart
+  from the measurement), where the time goes, strengths, consistency over the session and
+  notes on the data. Every statement is a fact with an id. When nothing can be recommended,
+  the report says so.
+- **AI write-up** with a local model through Ollama (default `qwen3:14b`). The model sees
+  only the facts and must cite them; a fact check traces every number, corner, lap and time
+  direction back to the cited facts, requires "about" for real-F1 estimates and blocks topics
+  the facts do not cover. One retry with the problems listed, then the measured report.
+- **Questions** about a lap, answered with read-only look-ups (corners, one corner, another
+  lap of the session) and the same check; questions the data cannot answer are refused.
+- Every AI text is **stored** with model, prompt version, report version, a fingerprint of
+  the facts, check results and timing, apart from the measurements.
+- App: the **Race Engineer** page. Terminal: `pitwall engineer status | report | narrate |
+  ask | eval`. Config: an `[engineer]` table (model, address, timeout, temperature, context).
+- `pitwall engineer eval` writes up to 20 laps with a model and makes a rating sheet, to
+  choose the model on your own laps.
+
+**Checked**
+- On synthetic laps with known mistakes: the focus of the report is exactly the injected
+  mistake (braking early, late throttle, a lock-up and wheelspin); identical laps give no
+  focus and say so; a golden report text guards the wording.
+- The measured report itself passes the fact check, and every fact's numbers are read the
+  same way by the check.
+- Adversarial cases are rejected: an invented number, a calculated sum, the wrong corner, a
+  loss described as a gain, a real-F1 number without "about", tyres or lock-ups that no cited
+  fact mentions, an unknown lap and an unknown citation. A correctly quoted number with a
+  missing citation is repaired, an invented one never.
+- Against a stand-in for Ollama's API: requests carry only facts, the JSON schema limits
+  citations to the report's fact ids, a rejected answer is retried once with the problems,
+  two failures show the measured report, no Ollama or a missing model show the measured
+  report with the reason, tool calls and their results follow Ollama's format, and questions
+  about past sessions are refused.
+
+**Limitations**
+- No real model was run during development (the development machine has no Ollama); the
+  model choice and the Stage 5 gate, zero unsupported claims over about 20 of your laps, need
+  `pitwall engineer eval` on the Mac and your ratings.
+- The check covers numbers, corners, laps, the direction of time differences, estimates and
+  a list of topics; it cannot judge every relation in a sentence (for example which of two
+  cited corners a quoted number belongs to). Your ratings in the eval cover that.
+- No history yet: questions about progress over sessions are refused until Stage 7.
+- The write-up waits for the whole answer (no streaming); the first request after starting
+  Ollama is slow while the model loads.
